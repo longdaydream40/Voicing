@@ -2,77 +2,60 @@
 
 ## 1. Identity
 
-- **What it is**: 基于 Flutter 的移动端应用，作为语音输入客户端与 PC 端通信。
-- **Purpose**: 通过 WebSocket 接收用户的语音/文本输入并实时同步到 PC 端，支持 UDP 自动发现 PC 服务器。
+- **What it is**: 基于 Flutter 的移动端客户端。
+- **Purpose**: 接收用户语音/文本输入，并通过 WebSocket 实时同步到 PC 端。
 
 ## 2. Core Components
 
-- `android/voice_coding/lib/main.dart` (VoiceCodingApp, MainPage, _MainPageState): Flutter 应用入口和主页面状态管理，包含所有核心逻辑。
-- `android/voice_coding/lib/main.dart` (_connect): WebSocket 连接方法，连接到 PC 端服务器。
-- `android/voice_coding/lib/main.dart` (_handleMessage): WebSocket 消息处理，处理 connected/ack/sync_state/pong 消息类型。
-- `android/voice_coding/lib/main.dart` (_startUdpDiscovery, _handleUdpDiscovery): UDP 监听服务，自动发现局域网内的 PC 服务器。
-- `android/voice_coding/lib/main.dart` (_sendText, _sendShadowIncrement): 文本发送逻辑，包括普通发送和自动发送增量模式。
-- `android/voice_coding/lib/main.dart` (_onTextControllerChanged): 监听文本输入变化，检测 composing 状态实现自动发送。
-- `android/voice_coding/lib/main.dart` (_buildDropdownMenuOverlay, _buildMenuItem): 下拉菜单 UI 组件。
-- `android/voice_coding/lib/main.dart` (_buildInputArea): 文本输入框组件。
-- `android/voice_coding/pubspec.yaml`: Flutter 依赖配置（web_socket_channel, shared_preferences）。
-- `android/voice_coding/android/app/src/main/AndroidManifest.xml`: Android 权限配置（INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE）。
+- `android/voice_coding/lib/main.dart`
+  - `VoiceCodingApp`: 应用入口与主题配置
+  - `_MainPageState`: UI 状态、网络状态、输入发送逻辑
+  - `_forceReconnect()`: 前台恢复和手动刷新时的统一重连入口
+  - `_connect()`: WebSocket 建立与连接代次管理
+  - `_handleUdpDiscovery()`: UDP 自动发现与同 IP 恢复重连
+  - `_checkHeartbeat()`: ping/pong 心跳保活与超时判定
+- `android/voice_coding/lib/connection_recovery_policy.dart`
+  - 连接恢复决策：前台恢复、心跳超时、UDP 恢复重连冷却窗口
+- `android/voice_coding/test/connection_recovery_policy_test.dart`
+  - Android 连接恢复测试
+- `android/voice_coding/pubspec.yaml`
+  - Flutter 依赖与版本号
 
-## 3. Execution Flow (LLM Retrieval Map)
+## 3. Execution Flow
 
-### 应用启动流程
+### 应用启动
 
-1. **入口**: `main()` 函数调用 `runApp(VoiceCodingApp())` 启动应用 (`main.dart:9-11`)。
-2. **主题配置**: `VoiceCodingApp.build()` 配置 Material 3 深色主题 (`main.dart:16-54`)。
-3. **状态初始化**: `_MainPageState.initState()` 执行初始化 (`main.dart:90-120`)：
-   - 初始化菜单动画控制器
-   - 添加文本控制器监听器
-   - 加载 SharedPreferences（自动发送开关状态）
-   - 启动 UDP 发现监听
-   - 开始 WebSocket 连接
+1. 启动 `VoiceCodingApp`
+2. `MainPage` 初始化菜单动画、文本监听、偏好设置
+3. 启动 UDP 发现监听
+4. 立即触发一次 `_forceReconnect()`
 
-### UDP 自动发现流程
+### WebSocket 连接
 
-1. **启动监听**: `_startUdpDiscovery()` 绑定 UDP 端口 9530 (`main.dart:231-252`)。
-2. **接收广播**: `_udpSocket.listen()` 监听 `RawSocketEvent.read` 事件 (`main.dart:239-247`)。
-3. **解析消息**: `_handleUdpDiscovery()` 解析 `voice_coding_server` 类型的 JSON (`main.dart:255-282`)。
-4. **更新配置**: 提取 IP 和 Port，更新 `_serverIp` 和 `_serverPort` (`main.dart:264-269`)。
-5. **触发连接**: 如果未连接，调用 `_connect()` 立即连接 (`main.dart:272-275`)。
+1. `_connect()` 为当前连接分配新的 generation
+2. 关闭旧 channel，清理心跳状态
+3. 使用 `IOWebSocketChannel.connect()` 发起连接，并设置 8 秒超时
+4. 收到 `connected` 消息后切换为 `connected`
+5. 收到 `ack` 时清空输入框
+6. 收到 `pong` / `sync_state` 时刷新 `_syncEnabled`
 
-### WebSocket 连接流程
+### 休眠恢复
 
-1. **发起连接**: `_connect()` 使用 `WebSocketChannel.connect()` 连接到 `ws://_serverIp:_serverPort` (`main.dart:161-188`)。
-2. **监听消息**: `_channel.stream.listen()` 处理 incoming 消息 (`main.dart:172-183`)。
-3. **处理 connected**: 收到 `type='connected'` 时更新状态和同步开关 (`main.dart:195-200`)。
-4. **处理 ack**: 收到 `type='ack'` 时清空输入框 (`main.dart:201-202`)。
-5. **处理 sync_state/pong**: 更新同步状态 `_syncEnabled` (`main.dart:203-206`)。
-6. **断线重连**: `_handleDisconnect()` 设置 3 秒后自动重连 (`main.dart:220-227`)。
+1. `paused`：停止心跳，避免后台无意义 ping
+2. `resumed`：不复用旧 socket，直接 `_forceReconnect()`
+3. 如果旧 socket 晚到 `onDone` / `onError`，会因 generation 不匹配被忽略
 
-### 文本发送流程
+### UDP 自动发现
 
-1. **普通发送**: 用户按回车键触发 `_sendText()` (`main.dart:284-302`)：
-   - 检查连接状态和同步开关
-   - 发送 JSON: `{"type": "text", "content": text}`
-   - 保存文本到 `_lastSentText` 用于撤回
-   - 重置 `_lastSentLength`
-
-2. **自动发送 (Shadow Mode)**: `_onTextControllerChanged()` 监听输入变化 (`main.dart:305-329`)：
-   - 检测 `composing` 状态（组合文本/输入法下划线）
-   - 从"有组合文本"变成"无组合文本"时触发增量发送
-   - `_sendShadowIncrement()` 只发送新增部分 (`main.dart:332-352`)
-
-### 应用生命周期处理
-
-1. **前台恢复**: `didChangeAppLifecycleState(resumed)` 取消待处理的重连并立即连接 (`main.dart:152-159`)。
+1. Android 持续监听 9530 端口
+2. 收到 `voice_coding_server` 后解析 IP/端口
+3. 如果地址变化，立刻切换到新地址
+4. 如果地址没变但当前未连接，也允许广播触发恢复重连
 
 ## 4. Design Rationale
 
-**状态管理**: 使用 `setState()` 进行局部状态更新，无需外部状态管理库（如 Provider/Riverpod），保持项目轻量。
-
-**自动发送核心原理**: 利用 Flutter 的 `TextEditingController.value.composing` 检测输入法完成状态。`composing.isValid && !composing.isCollapsed` 表示输入法正在输入（下划线状态），从"有组合文本"变成"无组合文本"时表示输入完成，此时发送增量文本。
-
-**消息格式**: 统一使用 JSON，`type` 字段区分消息类型（text/connected/ack/sync_state/ping/pong）。
-
-**网络权限**: Android 端需要 INTERNET/ACCESS_NETWORK_STATE/ACCESS_WIFI_STATE 权限，已在 AndroidManifest.xml 中配置。
-
-**UI 框架**: Material 3 + 自定义动画，无第三方 UI 库依赖，保持最小依赖。
+- **强制前台重连**：解决手机息屏后 WebSocket 半死不活但 UI 未恢复的问题。
+- **连接超时**：避免连接卡死在 `connecting`。
+- **连接代次隔离**：避免旧连接回调污染新状态。
+- **恢复策略下沉**：把关键恢复规则放进 `connection_recovery_policy.dart`，便于单测。
+- **UDP 作为恢复信号**：即使 IP 不变，只要客户端当前未连上，也允许 UDP 广播把连接拉回来。

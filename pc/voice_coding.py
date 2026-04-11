@@ -37,6 +37,8 @@ import pyautogui
 from PIL import Image, ImageDraw
 import pyperclip
 
+from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
+
 # ============================================================
 # Single Instance Check / 单实例检查
 # ============================================================
@@ -78,7 +80,7 @@ def show_already_running_message():
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "1.9.0"
+APP_VERSION = "2.4.2"
 WS_PORT = 9527      # WebSocket port
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -212,24 +214,33 @@ def start_udp_broadcast():
     Start UDP broadcast to let mobile clients discover this server.
     启动 UDP 广播让移动客户端自动发现此服务器。
     """
+    global HOTSPOT_IP
+
     broadcast_socket = None
     try:
         broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Broadcast message format / 广播消息格式
-        broadcast_data = json.dumps({
-            "type": "voice_coding_server",
-            "ip": HOTSPOT_IP,
-            "port": state.ws_port,
-            "name": socket.gethostname()
-        }).encode('utf-8')
-
         logging.info(f"UDP 广播服务已启动，端口: {UDP_BROADCAST_PORT}")
 
         while state.running:
             try:
+                current_hotspot_ip, hotspot_ip_changed = refresh_hotspot_ip(
+                    HOTSPOT_IP,
+                    get_hotspot_ip(),
+                )
+                if hotspot_ip_changed:
+                    logging.info(f"热点 IP 更新: {HOTSPOT_IP} -> {current_hotspot_ip}")
+                HOTSPOT_IP = current_hotspot_ip
+
+                # Broadcast message format / 广播消息格式
+                broadcast_data = build_udp_broadcast_payload(
+                    HOTSPOT_IP,
+                    state.ws_port,
+                    socket.gethostname(),
+                )
+
                 broadcast_socket.sendto(
                     broadcast_data,
                     ('<broadcast>', UDP_BROADCAST_PORT)

@@ -22,7 +22,7 @@
 | `fix:` | Bug 修复 | `fix: 添加Android网络权限，修复APK无法连接问题` |
 | `refactor:` | 重构（不改变功能） | `refactor: 影随模式改为 1:1 完全同步` |
 | `chore:` | 构建/配置/依赖 | `chore: 移除动态ICO转换步骤` |
-| `docs:` | 文档更新 | `docs: 更新 v2.3.1 发布文档` |
+| `docs:` | 文档更新 | `docs: 更新 v2.4.2 发布文档` |
 | `debug:` | 调试代码（临时） | `debug: 添加影随模式调试日志` |
 | `fix(ci):` | CI/CD 修复 | `fix(ci): 移除 gradle.properties 中的本地代理配置` |
 
@@ -43,12 +43,12 @@ MAJOR.MINOR.PATCH
 
 - **MAJOR**：不兼容的重大变更（如 v1.x -> v2.0）
 - **MINOR**：向下兼容的新功能（如 v2.2 -> v2.3）
-- **PATCH**：向下兼容的 Bug 修复（如 v2.3.0 -> v2.3.1）
+- **PATCH**：向下兼容的 Bug 修复（如 v2.4.1 -> v2.4.2）
 
 ### Git 标签
 
-- 格式：`v<version>`，如 `v2.3.1`
-- 创建时机：发布时通过 GitHub Actions 自动创建
+- 格式：`v<version>`，如 `v2.4.2`
+- 创建时机：发布时由开发者创建并推送，GitHub Actions 负责构建和生成 Release
 - 标签位置：指向发布 commit
 
 ## 4. CHANGELOG 规范

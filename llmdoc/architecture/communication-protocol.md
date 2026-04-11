@@ -2,58 +2,69 @@
 
 ## 1. Identity
 
-- **What it is**: PC 端与 Android 端之间的双层网络通信协议
-- **Purpose**: 实现设备自动发现、实时数据传输和状态同步
+- **What it is**: PC 端与 Android 端之间的双层通信协议。
+- **Purpose**: 负责服务发现、长连接传输、状态同步和连接恢复。
 
 ## 2. Core Components
 
-- `pc/voice_coding.py:82-148` (WS_PORT, UDP_BROADCAST_PORT, get_hotspot_ip): 网络配置常量和 IP 检测逻辑
-- `pc/voice_coding.py:210-251` (start_udp_broadcast): UDP 广播服务，每 2 秒发送服务器信息
-- `pc/voice_coding.py:345-414` (handle_client): WebSocket 服务器处理客户端连接和消息
-- `pc/voice_coding.py:417-431` (broadcast_sync_state): 同步状态广播到所有客户端
-- `android/voice_coding/lib/main.dart:161-188` (_connect): WebSocket 客户端连接逻辑
-- `android/voice_coding/lib/main.dart:190-211` (_handleMessage): 服务端消息处理
-- `android/voice_coding/lib/main.dart:229-252` (_startUdpDiscovery): UDP 发现监听服务
-- `android/voice_coding/lib/main.dart:254-270` (_handleUdpDiscovery): UDP 广播消息解析
+- `pc/voice_coding.py` `start_udp_broadcast()`: 周期性广播服务器信息
+- `pc/network_recovery.py`: 热点 IP 刷新与 UDP 广播负载生成
+- `pc/voice_coding.py` `handle_client()`: WebSocket 消息处理
+- `android/voice_coding/lib/main.dart` `_connect()`: WebSocket 客户端连接逻辑
+- `android/voice_coding/lib/main.dart` `_handleMessage()`: WebSocket 消息处理
+- `android/voice_coding/lib/main.dart` `_handleUdpDiscovery()`: UDP 广播解析与恢复重连
+- `android/voice_coding/lib/connection_recovery_policy.dart`: Android 端连接恢复策略
 
-## 3. Execution Flow (LLM Retrieval Map)
+## 3. Execution Flow
 
-### UDP 发现流程 (端口 9530)
+### UDP 发现流程（9530）
 
-1. **PC 端启动**: `pc/voice_coding.py:1102-1104` 启动 UDP 广播线程
-2. **广播发送**: `pc/voice_coding.py:222-227` 每 2 秒发送 JSON 到 `<broadcast>:9530`
-3. **Android 监听**: `main.dart:233-252` 绑定 `0.0.0.0:9530` 接收广播
-4. **解析更新**: `main.dart:255-270` 解析 JSON，更新 `_serverIp` 和 `_serverPort`
+1. PC 端启动后持续广播 `voice_coding_server`
+2. 每轮广播前重新获取热点 IP
+3. Android 持续监听 9530 端口
+4. Android 收到广播后更新 `_serverIp` / `_serverPort`
+5. 如果当前未连接，即使 IP 不变，也允许广播触发恢复重连
 
-### WebSocket 连接流程 (端口 9527)
+### WebSocket 连接流程（9527）
 
-1. **Android 发起连接**: `main.dart:168-170` 连接到 `ws://$_serverIp:9527`
-2. **PC 接受连接**: `pc/voice_coding.py:437-444` WebSocket 服务器接受连接
-3. **发送欢迎消息**: `pc/voice_coding.py:351-356` 发送 `connected` 消息
-4. **Android 更新状态**: `main.dart:195-200` 更新连接状态和同步开关
+1. Android 发起 `ws://<ip>:9527`
+2. PC 接受连接并发送 `connected`
+3. Android 记录 `connected` 状态并开始心跳
+4. Android 发送 `text`
+5. PC 输入文本后发送 `ack`
 
-### 文本传输流程
+### 心跳与状态同步
 
-1. **Android 发送**: `main.dart:284-302` 发送 `{"type": "text", "content": "..."}`
-2. **PC 接收处理**: `pc/voice_coding.py:372-385` 检查同步状态，调用 `type_text()`
-3. **PC 确认**: `pc/voice_coding.py:387-390` 发送 `ack` 消息
-4. **Android 清空**: `main.dart:201-202` 收到 `ack` 后清空文本框
+1. Android 周期发送 `ping`
+2. PC 响应 `pong`，同时带上 `sync_enabled`
+3. Android 更新本地同步状态
+4. 如果 30 秒没有 `pong`，Android 触发断线重连
 
-### 心跳保活流程
+### 休眠恢复
 
-1. **Android 发送 ping**: 通过定时器发送 `{"type": "ping"}`
-2. **PC 响应 pong**: `pc/voice_coding.py:397-400` 返回 `{"type": "pong", "sync_enabled": bool}`
-3. **状态同步**: `main.dart:203-206` 更新本地同步状态
+1. Android 进入后台时停止心跳
+2. 返回前台时直接强制重连
+3. 连接建立有 8 秒超时
+4. 旧连接回调通过 generation 机制隔离
 
-### 状态同步流程
+## 4. Message Types
 
-1. **PC 用户切换**: 通过托盘菜单切换"同步输入"
-2. **广播状态**: `pc/voice_coding.py:417-431` 向所有客户端发送 `sync_state`
-3. **Android 更新**: `main.dart:203-206` 更新 UI 显示
+### PC → Android
 
-## 4. Design Rationale
+- `connected`
+- `ack`
+- `pong`
+- `sync_state`
+- `sync_disabled`
 
-- **双层设计**: UDP 用于发现（无状态），WebSocket 用于传输（有状态），分离关注点
-- **单向广播**: PC 端主动广播，Android 端被动监听，简化设备发现逻辑
-- **JSON 统一格式**: 所有消息使用 JSON，易于扩展和调试
-- **心跳合并状态**: pong 消息携带 `sync_enabled`，减少消息数量
+### Android → PC
+
+- `text`
+- `ping`
+
+## 5. Design Rationale
+
+- **UDP 负责发现，WebSocket 负责传输**：降低配置复杂度。
+- **pong 合并同步状态**：减少额外消息数量。
+- **同 IP 恢复重连**：解决“WiFi 还在，但客户端没重新连上”的场景。
+- **动态广播热点 IP**：解决电脑网络恢复后继续广播旧地址的问题。

@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show pi;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'connection_recovery_policy.dart';
 
 // ============================================================
 // Design Tokens - 4px grid system
@@ -49,11 +51,10 @@ class VoiceCodingApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        colorScheme: ColorScheme.dark(
+        colorScheme: const ColorScheme.dark(
           primary: const Color(0xFFD97757),
           secondary: const Color(0xFFD97757),
           surface: const Color(0xFF343330),
-          background: const Color(0xFF000000),
           error: const Color(0xFFE85C4A),
         ),
         scaffoldBackgroundColor: const Color(0xFF000000),
@@ -96,7 +97,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
 
   WebSocketChannel? _channel;
   ConnectionStatus _status = ConnectionStatus.disconnected;
-  String _deviceName = '';
   bool _syncEnabled = true;
   Timer? _reconnectTimer;
   String _serverIp = '192.168.137.1';  // 默认 IP，会被 UDP 发现覆盖
@@ -115,10 +115,18 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
   DateTime? _lastPong;
   static const int _heartbeatIntervalSec = 15;
   static const int _heartbeatTimeoutSec = 30;
+  static const int _connectTimeoutSec = 8;
 
   // 重连策略
   int _reconnectAttempt = 0;
   static const int _maxReconnectDelaySec = 30;
+  static const int _udpReconnectCooldownMs = 3000;
+  int _connectionGeneration = 0;
+  DateTime? _lastConnectStartedAt;
+  final ConnectionRecoveryPolicy _recoveryPolicy = const ConnectionRecoveryPolicy(
+    heartbeatTimeout: Duration(seconds: _heartbeatTimeoutSec),
+    udpReconnectCooldown: Duration(milliseconds: _udpReconnectCooldownMs),
+  );
 
   // 动画相关
   late AnimationController _menuAnimationController;
@@ -154,7 +162,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     _startUdpDiscovery();
 
     // 开始连接（可能在 UDP 发现后会被重新触发）
-    _connect();
+    _forceReconnect(resetBackoff: true, reason: 'init');
   }
 
   /// 加载用户偏好设置
@@ -177,6 +185,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
     _textController.removeListener(_onTextControllerChanged);
+    _connectionGeneration++;
     _channel?.sink.close();
     _textController.dispose();
     _scrollController.dispose();
@@ -191,51 +200,71 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     if (state == AppLifecycleState.paused) {
       // 进入后台/息屏：停止心跳省电
       _stopHeartbeat();
-    } else if (state == AppLifecycleState.resumed) {
-      // 回到前台：验证连接或重连
-      _reconnectTimer?.cancel();
-      if (_status == ConnectionStatus.connected) {
-        // 连接可能已静默死亡，发 ping 验证
-        _sendPing();
-        _startHeartbeat();
-      } else {
-        _reconnectAttempt = 0;  // 用户主动回来，重置退避
-        _connect();
-      }
+    } else if (state == AppLifecycleState.resumed && _recoveryPolicy.shouldForceReconnectOnResume()) {
+      // 回到前台：不要信任休眠前的旧 socket，直接重建连接。
+      _forceReconnect(resetBackoff: true, reason: 'app resumed');
     }
   }
 
+  void _forceReconnect({
+    bool resetBackoff = false,
+    String reason = '',
+  }) {
+    if (resetBackoff) {
+      _reconnectAttempt = 0;
+    }
+
+    if (reason.isNotEmpty) {
+      print('开始重连: $reason');
+    }
+
+    _connect();
+  }
+
   void _connect() {
+    final int connectionId = ++_connectionGeneration;
+    _lastConnectStartedAt = DateTime.now();
+
     setState(() => _status = ConnectionStatus.connecting);
 
     // Close old connection if exists
+    _reconnectTimer?.cancel();
     _stopHeartbeat();
     _channel?.sink.close();
+    _lastPong = null;
 
     try {
-      _channel = WebSocketChannel.connect(
+      _channel = IOWebSocketChannel.connect(
         Uri.parse('ws://$_serverIp:$_serverPort'),
+        connectTimeout: const Duration(seconds: _connectTimeoutSec),
       );
 
       _channel!.stream.listen(
         (message) {
-          _handleMessage(message);
+          _handleMessage(message, connectionId);
         },
         onError: (error) {
+          if (connectionId != _connectionGeneration) return;
           print('WebSocket error: $error');
-          _handleDisconnect();
+          _handleDisconnect(connectionId: connectionId);
         },
         onDone: () {
-          _handleDisconnect();
+          if (connectionId != _connectionGeneration) return;
+          _handleDisconnect(connectionId: connectionId);
         },
       );
     } catch (e) {
+      if (connectionId != _connectionGeneration) return;
       print('Connection error: $e');
-      _handleDisconnect();
+      _handleDisconnect(connectionId: connectionId);
     }
   }
 
-  void _handleMessage(dynamic message) {
+  void _handleMessage(dynamic message, int connectionId) {
+    if (connectionId != _connectionGeneration) {
+      return;
+    }
+
     try {
       final data = json.decode(message);
       final type = data['type'];
@@ -244,7 +273,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
         setState(() {
           _status = ConnectionStatus.connected;
           _syncEnabled = data['sync_enabled'] ?? true;
-          _deviceName = data['computer_name'] ?? '';
         });
         _reconnectAttempt = 0;
         _lastPong = DateTime.now();
@@ -262,7 +290,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     }
   }
 
-  void _handleDisconnect() {
+  void _handleDisconnect({int? connectionId}) {
+    if (connectionId != null && connectionId != _connectionGeneration) {
+      return;
+    }
+
     _stopHeartbeat();
 
     if (_status == ConnectionStatus.disconnected) return;  // 防止重复触发
@@ -270,7 +302,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     setState(() {
       _status = ConnectionStatus.disconnected;
       _syncEnabled = true;
-      _deviceName = '';
     });
 
     // 指数退避重连：3s → 6s → 12s → 24s → 30s(上限)
@@ -291,7 +322,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
   void _startHeartbeat() {
     _stopHeartbeat();
     _heartbeatTimer = Timer.periodic(
-      Duration(seconds: _heartbeatIntervalSec),
+      const Duration(seconds: _heartbeatIntervalSec),
       (_) => _checkHeartbeat(),
     );
   }
@@ -310,13 +341,16 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     }
 
     // 检查上次 pong 是否超时
-    if (_lastPong != null) {
-      final elapsed = DateTime.now().difference(_lastPong!).inSeconds;
-      if (elapsed > _heartbeatTimeoutSec) {
-        print('心跳超时 (${elapsed}s)，判定连接死亡');
-        _handleDisconnect();
-        return;
-      }
+    final now = DateTime.now();
+    if (_recoveryPolicy.isHeartbeatExpired(
+      status: _status,
+      lastPong: _lastPong,
+      now: now,
+    )) {
+      final elapsed = _lastPong == null ? 0 : now.difference(_lastPong!).inSeconds;
+      print('心跳超时 (${elapsed}s)，判定连接死亡');
+      _handleDisconnect();
+      return;
     }
 
     _sendPing();
@@ -366,19 +400,29 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
         final discoveredPort = data['port'] as int?;
 
         if (discoveredIp != null && discoveredPort != null) {
-          // 检查是否与当前配置不同
-          if (_serverIp != discoveredIp || _serverPort != discoveredPort) {
+          final bool serverChanged = _serverIp != discoveredIp || _serverPort != discoveredPort;
+          final bool shouldReconnectFromBroadcast = _recoveryPolicy.shouldReconnectFromUdp(
+            serverChanged: serverChanged,
+            status: _status,
+            lastConnectStartedAt: _lastConnectStartedAt,
+            now: DateTime.now(),
+          );
+
+          if (serverChanged) {
             print('UDP 发现服务器: $discoveredIp:$discoveredPort (来源: $sourceIp)');
             setState(() {
               _serverIp = discoveredIp;
               _serverPort = discoveredPort;
             });
+          }
 
-            // 如果当前未连接，立即尝试连接新发现的服务器
-            if (_status != ConnectionStatus.connected) {
-              _reconnectTimer?.cancel();
-              _connect();
-            }
+          // 即使 IP 没变，只要当前没连上，也要允许广播把连接拉回来。
+          if (shouldReconnectFromBroadcast) {
+            _reconnectTimer?.cancel();
+            _forceReconnect(
+              resetBackoff: true,
+              reason: serverChanged ? 'udp server update' : 'udp recovery probe',
+            );
           }
         }
       }
@@ -386,7 +430,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
       print('UDP 消息解析失败: $e');
     }
   }
-
   void _sendText() {
     final text = _textController.text.trim();
     if (text.isEmpty || _status != ConnectionStatus.connected || !_syncEnabled) {
@@ -538,12 +581,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
   }
 
   void _refreshConnection() {
-    // 关闭现有连接
-    _reconnectTimer?.cancel();
-    _channel?.sink.close();
-
-    // 重新连接
-    _connect();
+    _forceReconnect(resetBackoff: true, reason: 'manual refresh');
   }
 
   void _recallLastText() {
@@ -881,10 +919,4 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
       ],
     );
   }
-}
-
-enum ConnectionStatus {
-  disconnected,
-  connecting,
-  connected,
 }

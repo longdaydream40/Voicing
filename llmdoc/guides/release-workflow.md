@@ -1,57 +1,54 @@
 # 如何发布新版本
 
-完整的版本发布流程指南，包括本地构建、CHANGELOG 更新、Git 标签推送和 CI/CD 发布。
+正式发布以 GitHub Actions 为准，本地构建仅用于开发调试。
 
-1. **更新 CHANGELOG**: 在 `CHANGELOG.md` 中添加新版本条目，格式为 `## [版本号] - 日期`，列出所有变更。参考 `CLAUDE.md` 中的强制规则。
+## 标准流程
 
-2. **提交代码**: `git add` 和 `git commit` 提交代码和 CHANGELOG。
+1. 更新代码、测试和文档
+2. 运行推送前测试
+3. 提交变更
+4. 创建 `v<version>` 标签
+5. 推送 `main` 和标签
+6. 在 GitHub Actions 中等待 `build-android`、`build-windows`、`release` 完成
 
-3. **创建 Git 标签**: 使用 `git tag v2.3.1` 创建版本标签 (必须以 `v` 开头，与 CHANGELOG 版本一致)。
+## 命令示例
 
-4. **推送标签**: `git push origin v2.3.1` 推送标签触发 GitHub Actions 工作流。
+```bash
+git add .
+git commit -m "chore: release v2.4.2"
+git tag v2.4.2
+git push origin main
+git push origin v2.4.2
+```
 
-5. **验证构建**: 在 GitHub Actions 页面查看构建状态，确认 `build-android` 和 `build-windows` 两个 job 成功完成，Release 自动创建。
+## 推送前测试
 
-## 本地构建
+### Android
 
-### PC 端
-```powershell
+```bash
+cd android/voice_coding
+flutter test test/connection_recovery_policy_test.dart
+flutter analyze --no-fatal-infos --no-fatal-warnings
+```
+
+### PC
+
+```bash
 cd pc
-pip install -r requirements.txt
-pyinstaller VoiceCoding.spec
-```
-输出: `pc/dist/VoiceCoding.exe`
-
-### Android 端
-```powershell
-cd android/voice_coding
-flutter pub get
-flutter build apk --release
-```
-输出: `android/voice_coding/build/app/outputs/flutter-apk/app-release.apk`
-
-## 生成 Android 图标
-```powershell
-cd android/voice_coding
-flutter pub run flutter_launcher_icons
+python -m unittest tests.test_network_recovery
+python -m py_compile voice_coding.py network_recovery.py
 ```
 
-## CI/CD 故障排查
-
-### Gradle 构建失败
-- **错误**: `java.net.ConnectException: Connection refused`
-- **原因**: `android/voice_coding/android/gradle.properties` 包含本地代理配置
-- **解决**: 删除 `systemProp.https.proxy*` 配置，本地 Java 路径应在 `local.properties` 中设置
+## 常见问题
 
 ### Java 版本不兼容
-- **错误**: `Error resolving plugin > 25.0.1`
-- **原因**: 系统使用不兼容的 Java 版本 (如 Java 25)
-- **解决**: 在 `android/voice_coding/android/local.properties` 设置 `org.gradle.java.home=C:\dev\java21\jdk-21.0.2`
 
-### EXE 图标缺失
-- **原因**: PyInstaller 未包含 `--icon` 和 `--add-data` 参数
-- **解决**: 确保 `pc/assets/icon.ico` 存在，使用完整命令: `pyinstaller --onefile --windowed --name=VoiceCoding --icon=assets/icon.ico --add-data "assets;assets" voice_coding.py`
+- 症状：Gradle 报 `25.0.1`
+- 处理：本地开发时在 `android/local.properties` 设置 Java 21 路径
+- 说明：CI 使用 GitHub Actions 中固定的 Java 17，不依赖本机环境
 
-### APK 网络连接失败
-- **原因**: `AndroidManifest.xml` 缺少网络权限
-- **解决**: 添加 `INTERNET`、`ACCESS_NETWORK_STATE`、`ACCESS_WIFI_STATE` 权限
+### Release 没有产物
+
+- 检查标签是否为 `v<version>` 格式
+- 检查 `CHANGELOG.md` 是否存在对应版本条目
+- 检查 Actions 中 `build-android` 和 `build-windows` 是否成功

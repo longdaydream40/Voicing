@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.4.2] - 2026-04-11
+
+### 修复
+
+- **Android 息屏唤醒后的假断连**
+  - 前台恢复时不再信任休眠前的旧 WebSocket，而是直接强制重建连接
+  - WebSocket 连接新增 8 秒超时，避免状态卡在 `connecting`
+  - 新增连接代次隔离，旧 socket 的 `onDone` / `onError` 不再覆盖新连接状态
+  - 即使 UDP 广播的 IP 和端口没有变化，只要当前未连接，广播也会触发恢复重连
+
+- **PC 端热点地址漂移**
+  - UDP 广播改为每轮重新检测热点 IP，避免电脑网络恢复后继续广播旧地址
+
+### 测试
+
+- **Android 连接恢复策略测试**
+  - 新增 `android/voice_coding/test/connection_recovery_policy_test.dart`
+  - 覆盖前台恢复、心跳超时、同 IP UDP 恢复、连接冷却窗口
+
+- **PC 广播恢复逻辑测试**
+  - 新增 `pc/tests/test_network_recovery.py`
+  - 覆盖热点 IP 变化判定和 UDP 广播负载生成
+
+---
+
 ## [2.4.1] - 2026-04-08
 
 ### 改进

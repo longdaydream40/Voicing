@@ -12,11 +12,13 @@
 
 **解决方案**：
 ```python
-# 1. 使用 paintEvent 手动绘制背景
+# 1. 使用 paintEvent 手动绘制背景（支持 hover + pressed 两种状态）
 def paintEvent(self, event):
     painter = QPainter(self)
-    if self._hovered:
-        painter.setBrush(QColor(255, 255, 255, 15))  # 白色 6% 透明度
+    if self._pressed:
+        painter.setBrush(QColor(255, 255, 255, 25))  # 按压: 白色 10%
+    elif self._hovered:
+        painter.setBrush(QColor(255, 255, 255, 15))  # 悬停: 白色 6%
     painter.drawRoundedRect(rect, 4, 4)
 
 # 2. 子控件必须设置鼠标事件穿透
@@ -24,12 +26,10 @@ self.icon_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 self.text_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
 # 3. 使用 enterEvent/leaveEvent 追踪悬停状态
-def enterEvent(self, event):
-    self._hovered = True
-    self.update()
+# 4. 使用 mousePressEvent/mouseReleaseEvent 追踪按压状态
 ```
 
-**位置**：`pc/voice_coding.py:511-539`
+**位置**：`pc/voice_coding.py` MenuItemWidget 类
 
 ---
 
@@ -125,6 +125,150 @@ powershell -ExecutionPolicy Bypass -File ".claude/skills/pc-hot-restart/restart_
 
 ---
 
+### 7. Android 待机断连根因与修复
+
+**问题**：手机待机后亮屏，App 显示"未连接"，但 WiFi 仍连着热点
+
+**根因链**：
+1. App 只处理 `resumed` 生命周期，忽略 `paused`
+2. 无主动心跳，无法检测静默断连
+3. WiFi 层（L2）vs Socket 层（L4）不同步
+
+**修复方案**：
+```dart
+// 心跳：每 15s 发 ping，30s 无 pong 判定死亡
+Timer.periodic(Duration(seconds: 15), (_) => _checkHeartbeat());
+
+// 生命周期：paused 停心跳，resumed 验证连接
+if (state == AppLifecycleState.paused) _stopHeartbeat();
+if (state == AppLifecycleState.resumed) {
+  if (connected) { _sendPing(); _startHeartbeat(); }
+  else { _connect(); }
+}
+
+// 指数退避：3s → 6s → 12s → 24s → 30s(上限)
+final delaySec = 3 * (1 << _reconnectAttempt);
+```
+
+**位置**：`android/voice_coding/lib/main.dart`
+
+---
+
+### 8. PC 端 async 阻塞问题
+
+**问题**：`type_text()` 在 async `handle_client()` 中同步调用，阻塞 WebSocket 事件循环
+
+**修复**：
+```python
+# 改前（阻塞）
+type_text(text)
+
+# 改后（非阻塞）
+await asyncio.to_thread(type_text, text)
+```
+
+**位置**：`pc/voice_coding.py` handle_client()
+
+---
+
+### 9. Flutter 设计 Token 系统
+
+**基于 UI Skill 规范建立的设计常量**：
+
+```dart
+class AppSpacing {
+  static const double xs = 4;    // 4px grid base
+  static const double sm = 8;
+  static const double md = 16;
+  static const double lg = 24;
+  static const double componentPadding = 14;
+  static const double componentGap = 12;
+  static const double borderRadius = 12;
+}
+
+class AppColors {
+  static const Color surface = Color(0xFF3D3B37);
+  static const Color primary = Color(0xFFD97757);
+  static const Color success = Color(0xFF5CB87A);
+  // ...
+}
+```
+
+**规范来源**：ui-ux-pro-max + flutter-building-layouts + ui-mobile Skill
+
+**位置**：`android/voice_coding/lib/main.dart` 文件顶部
+
+---
+
+### 10. Android 息屏唤醒后的二次断连根因
+
+**现象**：手机仍连接电脑热点，但 App 在亮屏回前台后显示“未连接”，必须手动切 WiFi 才能恢复。
+
+**二次根因**：
+1. `resumed` 时仍可能继续信任休眠前旧 socket
+2. WebSocket 连接没有 connect timeout，容易卡在 `connecting`
+3. 旧 socket 的 `onDone` / `onError` 可能晚到，覆盖新连接状态
+4. 同一台 PC 的 UDP 广播如果 IP 未变化，旧逻辑不会触发恢复重连
+
+**修复策略**：
+```dart
+// 1. 前台恢复直接强制重建连接
+if (state == AppLifecycleState.resumed) {
+  _forceReconnect(resetBackoff: true, reason: 'app resumed');
+}
+
+// 2. 连接建立增加超时
+_channel = IOWebSocketChannel.connect(
+  Uri.parse('ws://$_serverIp:$_serverPort'),
+  connectTimeout: const Duration(seconds: 8),
+);
+
+// 3. 用 generation 忽略旧连接回调
+final int connectionId = ++_connectionGeneration;
+if (connectionId != _connectionGeneration) return;
+```
+
+**相关文件**：
+- `android/voice_coding/lib/main.dart`
+- `android/voice_coding/lib/connection_recovery_policy.dart`
+
+---
+
+### 11. PC 端 UDP 广播必须每轮刷新热点 IP
+
+**问题**：如果电脑网络恢复后热点 IP 发生变化，启动时缓存的旧 IP 会继续被广播，导致手机连错地址。
+
+**修复**：
+```python
+current_hotspot_ip, hotspot_ip_changed = refresh_hotspot_ip(
+    HOTSPOT_IP,
+    get_hotspot_ip(),
+)
+HOTSPOT_IP = current_hotspot_ip
+broadcast_data = build_udp_broadcast_payload(
+    HOTSPOT_IP,
+    state.ws_port,
+    socket.gethostname(),
+)
+```
+
+**测试**：
+- `pc/tests/test_network_recovery.py`
+
+---
+
+### 12. 本次推送前测试结论
+
+**Android**：
+- `flutter test test/connection_recovery_policy_test.dart` 通过（4/4）
+- `flutter analyze --no-fatal-infos --no-fatal-warnings` 无 error，仅剩 info
+
+**PC**：
+- `python -m unittest tests.test_network_recovery` 通过（3/3）
+- `python -m py_compile voice_coding.py network_recovery.py` 通过
+
+---
+
 ## 设计系统
 
 ### 颜色
@@ -202,9 +346,11 @@ powershell -ExecutionPolicy Bypass -File ".claude/skills/pc-hot-restart/restart_
 
 | 端 | 技术 | 版本 |
 |------|------|------|
-| PC | Python | 3.14 |
-| PC | PyQt5 | >=5.15.0 |
-| PC | websockets | >=12.0 |
+| PC | Python | 3.12 (CI) |
+| PC | PyQt5 | ~=5.15.0 |
+| PC | websockets | ~=12.0 |
 | Android | Flutter | 3.27.0 |
 | Android | Dart | ^3.5.4 |
 | Android | web_socket_channel | ^2.4.0 |
+
+**注**：v2.4.0 移除了 pystray 依赖，requirements.txt 版本约束从 `>=` 改为 `~=`

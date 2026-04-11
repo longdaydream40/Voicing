@@ -39,10 +39,10 @@
 4. **输出重命名**: `app-release.apk` → `voicing.apk`
 
 ### CI/CD 工作流
-1. **触发**: 推送 Git 标签 (如 `v2.3.1`) 触发 `.github/workflows/release.yml`
+1. **触发**: 推送 Git 标签 (如 `v2.4.2`) 触发 `.github/workflows/release.yml`
 2. **并行构建**:
    - `build-android` job: Ubuntu + Java 17 + Flutter 3.27.0 → 生成 `voicing.apk`
-   - `build-windows` job: Windows + Python 3.14 + PyInstaller → 生成 `voicing.exe`
+   - `build-windows` job: Windows + Python 3.12 + PyInstaller → 生成 `voicing.exe`
 3. **Changelog 提取**: 从 `CHANGELOG.md` 提取对应版本的更新日志
 4. **Release 创建**: `softprops/action-gh-release@v1` 创建 GitHub Release，上传构建产物
 
@@ -57,5 +57,5 @@
 - **资源嵌入**: `--add-data` 确保图标资源打包进 EXE，避免路径依赖
 - **阿里云镜像**: 加速国内 Gradle 依赖下载，提高 CI/CD 稳定性
 - **无代理配置**: `gradle.properties` 不包含本地代理设置，避免 CI 构建失败
-- **语义化版本**: CHANGELOG.md 版本号与 Git 标签保持一致 (如 `v2.3.1`)
+- **语义化版本**: CHANGELOG.md 版本号与 Git 标签保持一致 (如 `v2.4.2`)
 - **debug 签名**: 当前使用 debug key 签名 APK，生产环境需配置正式签名

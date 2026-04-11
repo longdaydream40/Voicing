@@ -4,6 +4,90 @@
 
 ---
 
+## 2026-04-11 会话
+
+### 会话目标
+修复 Android 息屏唤醒后的假断连，补充推送前测试，更新全部相关文档并准备走 GitHub Actions 发布
+
+### 执行步骤
+
+#### Step 1: 复盘根因并修复连接状态机 ✅
+- 确认问题主要在 Android 端，而不是文本封包本身
+- **Android**：`resumed` 后强制重建连接，不再信任休眠前旧 socket
+- **Android**：WebSocket 增加 8 秒连接超时
+- **Android**：加入 connection generation，忽略 stale socket 的 `onDone` / `onError`
+- **Android**：同 IP UDP 广播在未连接时也能触发恢复重连
+- **PC**：UDP 广播每轮重新检测热点 IP，避免广播旧地址
+
+#### Step 2: 补充测试脚本 ✅
+- 新增 `android/voice_coding/lib/connection_recovery_policy.dart`
+- 新增 `android/voice_coding/test/connection_recovery_policy_test.dart`
+- 新增 `pc/network_recovery.py`
+- 新增 `pc/tests/test_network_recovery.py`
+
+#### Step 3: 推送前验证 ✅
+- Android: `flutter test test/connection_recovery_policy_test.dart` → **4/4 通过**
+- Android: `flutter analyze --no-fatal-infos --no-fatal-warnings` → **无 error，仅剩 info**
+- PC: `python -m unittest tests.test_network_recovery` → **3/3 通过**
+- PC: `python -m py_compile voice_coding.py network_recovery.py` → **通过**
+
+#### Step 4: 文档与版本更新 ✅
+- 版本号更新：Android `2.4.2+1`，PC `APP_VERSION = 2.4.2`
+- 更新 `CHANGELOG.md` 增加 `2.4.2`
+- 更新 `README.md`、`android/README.md`、`DEV_STATUS.md`
+- 更新 `llmdoc` 中连接、架构、开发和发布文档
+
+### 当前状态
+
+- 代码修复完成
+- 推送前测试完成
+- 文档已同步
+- 待执行：提交、打 `v2.4.2` 标签、推送 GitHub Actions 发布
+
+---
+
+## 2026-04-08 会话
+
+### 会话目标
+全栈优化 + UI 优化，修复致命断连 bug，项目推至稳定状态
+
+### 执行步骤
+
+#### Step 1: 全面代码审查 ✅
+- 并行派出 3 个子代理审查 PC 端、Android 端、CI/配置
+- 发现 15 个优化点（3 Critical / 4 High / 5 Medium / 3 Low）
+- 定位断连 bug 根因：无心跳、无 paused 生命周期处理、无连接验证
+
+#### Step 2: v2.4.0 全栈优化 ✅
+- **Android 断连修复**：心跳（15s ping / 30s 超时）+ 生命周期 + 指数退避重连
+- **PC 异步阻塞修复**：type_text → asyncio.to_thread()
+- **代码清理**：5 处裸 except、AppState 加锁、UDP 改 Event、删除 pystray 冗余代码（~120行）
+- **CI 修复**：Python 3.14→3.12、依赖锁定 ~=、.gitignore 补充
+- **EXE 图标**：裁剪为圆形，重新生成多尺寸 ICO
+- Commit: `8800992`，Tag: `v2.4.0`，CI 构建成功
+
+#### Step 3: v2.4.1 UI 优化 ✅
+- 读取 3 个 UI Skill（ui-ux-pro-max、flutter-building-layouts、ui-mobile）提取规范
+- **Flutter**：AppSpacing/AppColors 常量、4px 网格、44pt 触摸目标、InkWell 涟漪、菜单分组卡片、动画统一 250ms
+- **PC**：菜单按压反馈、Escape 键关闭、项间距 2→4px
+- flutter analyze: 0 error, 16 info（全为 avoid_print / prefer_const）
+- Commit: `dd6874a`，Tag: `v2.4.1`，CI 构建中
+
+### 结果
+
+**两个版本已发布**：
+- v2.4.0: https://github.com/kevinlasnh/Voicing/releases/tag/v2.4.0
+- v2.4.1: https://github.com/kevinlasnh/Voicing/releases/tag/v2.4.1
+
+**代码统计**：
+- v2.4.0: 8 files, +154 -201 (net -47 行)
+- v2.4.1: 3 files, +227 -163 (net +64 行)
+
+### 项目状态
+**稳定** — 用户确认软件运行正常，无待完成任务
+
+---
+
 ## 2026-02-05 会话 (下午)
 
 ### 会话目标
@@ -135,6 +219,9 @@ M .claude/settings.local.json
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v2.4.1 | 2026-04-08 | UI 优化（设计常量、触摸反馈、菜单分组） |
+| v2.4.2 | 2026-04-11 | 修复休眠唤醒后的假断连，补充连接恢复测试 |
+| v2.4.0 | 2026-04-08 | 全栈优化（断连修复、异步阻塞、代码清理） |
 | v2.3.1 | 2026-02-04 | 网络权限 + EXE 图标修复 |
 | v2.3.0 | 2026-02-04 | 重命名 Voicing + 托盘优化 |
 | v2.2.0 | 2026-02-04 | 自定义应用图标 |
