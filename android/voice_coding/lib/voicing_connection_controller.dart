@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -35,7 +34,7 @@ class VoicingConnectionController extends ChangeNotifier {
   String _serverIp = VoicingProtocol.defaultServerIp;
   int _serverPort = VoicingProtocol.websocketPort;
   String _lastSentText = '';
-  bool _shadowModeEnabled = false;
+  final bool _shadowModeEnabled = true;
   int _lastSentLength = 0;
   bool _wasComposing = false;
   RawDatagramSocket? _udpSocket;
@@ -51,10 +50,8 @@ class VoicingConnectionController extends ChangeNotifier {
   String get serverIp => _serverIp;
   int get serverPort => _serverPort;
   String get lastSentText => _lastSentText;
-  bool get shadowModeEnabled => _shadowModeEnabled;
 
   Future<void> initialize() async {
-    await _loadPreferences();
     await _startUdpDiscovery();
     _forceReconnect(resetBackoff: true, reason: 'init');
   }
@@ -66,19 +63,6 @@ class VoicingConnectionController extends ChangeNotifier {
         _recoveryPolicy.shouldForceReconnectOnResume()) {
       _forceReconnect(resetBackoff: true, reason: 'app resumed');
     }
-  }
-
-  Future<void> setShadowModeEnabled(bool value) async {
-    _shadowModeEnabled = value;
-    if (value) {
-      _lastSentLength = textController.text.length;
-      _wasComposing = false;
-    } else {
-      _lastSentLength = 0;
-      _wasComposing = false;
-    }
-    notifyListeners();
-    await _saveAutoSendPreference(value);
   }
 
   void refreshConnection() {
@@ -123,17 +107,6 @@ class VoicingConnectionController extends ChangeNotifier {
     _udpSubscription?.cancel();
     _udpSocket?.close();
     super.dispose();
-  }
-
-  Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    _shadowModeEnabled = prefs.getBool('autoSendEnabled') ?? false;
-    notifyListeners();
-  }
-
-  Future<void> _saveAutoSendPreference(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('autoSendEnabled', value);
   }
 
   void _forceReconnect({

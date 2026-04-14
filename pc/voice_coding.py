@@ -92,7 +92,7 @@ def show_already_running_message():
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -769,6 +769,10 @@ class ModernTrayIcon(QSystemTrayIcon):
         self._init_icon_cache()
         # 预先创建菜单（避免首次打开慢）
         self.menu_widget = ModernMenuWidget()
+        # 预热渲染：强制 Qt 提前编译 stylesheet 和计算布局
+        self.menu_widget.move(-10000, -10000)
+        self.menu_widget.show()
+        QTimer.singleShot(50, self.menu_widget.hide)
         self.setup_icon()
         self.setup_menu()
         # 设置悬停提示

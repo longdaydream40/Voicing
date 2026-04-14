@@ -2,9 +2,9 @@
 
 > 最后更新：2026-04-14
 
-## v2.5.0 已发布
+## v2.5.1 已发布
 
-**最新 Release**: [v2.5.0](https://github.com/kevinlasnh/Voicing/releases/tag/v2.5.0)
+**最新 Release**: [v2.5.1](https://github.com/kevinlasnh/Voicing/releases/tag/v2.5.1)
 
 已发布文件：
 - `voicing.apk` - Android 安装包
@@ -36,8 +36,9 @@
 - [x] PC 端异步非阻塞输入（`asyncio.to_thread()`）
 
 ### 文档与测试
-- [x] CHANGELOG 更新到 v2.5.0
+- [x] CHANGELOG 更新到 v2.5.1
 - [x] README / llmdoc / Android 文档同步更新
+- [x] 自动发送功能硬编码为始终启用，移除手动开关
 - [x] Android 连接恢复策略测试
 - [x] PC 广播恢复逻辑测试
 - [x] Android / PC 协议契约测试
@@ -67,10 +68,10 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 
 ```bash
 git add .
-git commit -m "chore: release v2.5.0"
-git tag v2.5.0
+git commit -m "chore: release v2.5.1"
+git tag v2.5.1
 git push origin main
-git push origin v2.5.0
+git push origin v2.5.1
 ```
 
 标签推送后由 `.github/workflows/release.yml` 自动构建 APK 和 EXE，并创建 GitHub Release。
@@ -88,6 +89,7 @@ git push origin v2.5.0
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.5.1 | 2026-04-14 | 自动发送硬编码启用、Android UI 优化、PC 菜单首次右键卡顿修复 |
 | v2.5.0 | 2026-04-14 | 协议契约测试、Android 架构拆分、CI/文档修复、自动发送开关间距优化 |
 | v2.4.2 | 2026-04-11 | 修复休眠唤醒后的假断连，补充连接恢复测试 |
 | v2.4.1 | 2026-04-08 | UI 优化（设计常量、触摸反馈、菜单分组、键盘支持） |

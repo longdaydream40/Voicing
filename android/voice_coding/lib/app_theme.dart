@@ -24,6 +24,22 @@ class AppColors {
   static const Color divider = Color(0x14FFFFFF);
 }
 
+class AppTextStyles {
+  static const TextStyle label = TextStyle(
+    fontSize: 15,
+    fontWeight: FontWeight.w600,
+    color: AppColors.textPrimary,
+  );
+  static const TextStyle body = TextStyle(
+    fontSize: 16,
+    color: AppColors.textPrimary,
+  );
+  static const TextStyle hint = TextStyle(
+    fontSize: 13,
+    color: AppColors.textHint,
+  );
+}
+
 ThemeData buildAppTheme() {
   return ThemeData(
     useMaterial3: true,

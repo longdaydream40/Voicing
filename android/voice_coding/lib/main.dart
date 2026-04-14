@@ -144,7 +144,10 @@ class _MainPageState extends State<MainPage>
 
     late final Color connectionDotColor;
     late final String connectionText;
-    if (_controller.status == ConnectionStatus.connected) {
+    if (_controller.status == ConnectionStatus.connecting) {
+      connectionDotColor = AppColors.warning;
+      connectionText = '连接中...';
+    } else if (_controller.status == ConnectionStatus.connected) {
       connectionDotColor =
           showSyncWarning ? AppColors.warning : AppColors.success;
       connectionText = showSyncWarning ? '同步关闭' : '已连接';
@@ -169,9 +172,7 @@ class _MainPageState extends State<MainPage>
                 const SizedBox(width: AppSpacing.sm),
                 Text(
                   connectionText,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                  style: AppTextStyles.label.copyWith(
                     color: connectionDotColor,
                   ),
                 ),
@@ -192,6 +193,8 @@ class _MainPageState extends State<MainPage>
       borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
+        splashColor: const Color(0x1AFFFFFF),
+        highlightColor: const Color(0x0DFFFFFF),
         onTap: _toggleMenu,
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.componentPadding),
@@ -208,7 +211,7 @@ class _MainPageState extends State<MainPage>
                 },
                 child: const Icon(
                   Icons.chevron_right,
-                  color: Colors.white,
+                  color: AppColors.textPrimary,
                   size: 18,
                 ),
               ),
@@ -217,11 +220,7 @@ class _MainPageState extends State<MainPage>
                 child: Text(
                   '更多功能操作',
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
+                  style: AppTextStyles.label,
                 ),
               ),
             ],
@@ -308,20 +307,6 @@ class _MainPageState extends State<MainPage>
                                 _recallLastText();
                               },
                             ),
-                            const Divider(
-                              height: 1,
-                              color: AppColors.divider,
-                              indent: AppSpacing.md,
-                              endIndent: AppSpacing.md,
-                            ),
-                            _buildSwitchMenuItem(
-                              icon: Icons.send,
-                              text: '自动发送',
-                              value: _controller.shadowModeEnabled,
-                              onChanged: (value) {
-                                _controller.setShadowModeEnabled(value);
-                              },
-                            ),
                           ],
                         ),
                       ),
@@ -343,84 +328,18 @@ class _MainPageState extends State<MainPage>
   }) {
     return InkWell(
       onTap: onTap,
+      splashColor: const Color(0x1AFFFFFF),
+      highlightColor: const Color(0x0DFFFFFF),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.componentPadding),
         child: Row(
           children: [
-            Icon(icon, color: Colors.white, size: 18),
+            Icon(icon, color: AppColors.textPrimary, size: 18),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
                 text,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSwitchMenuItem({
-    required IconData icon,
-    required String text,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return InkWell(
-      onTap: () => onChanged(!value),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.componentPadding),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.white, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.lg),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              width: 42,
-              height: 24,
-              decoration: BoxDecoration(
-                color: value ? AppColors.success : AppColors.textHint,
-                borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(2),
-                child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 250),
-                  alignment: value
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: Container(
-                    width: 20,
-                    height: 20,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                style: AppTextStyles.label,
               ),
             ),
           ],
@@ -488,7 +407,7 @@ class _MainPageState extends State<MainPage>
         const SizedBox(height: AppSpacing.sm),
         const Center(
           child: Text(
-            '按回车键发送',
+            '语音自动发送 · 回车手动发送',
             style: TextStyle(
               fontSize: 13,
               color: AppColors.textHint,

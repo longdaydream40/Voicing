@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.1] - 2026-04-14
+
+### 改进
+
+- **Android: 自动发送功能改为默认启用**
+  - 移除菜单中的"自动发送"手动开关
+  - 语音输入完成后始终自动发送到电脑，无需手动开启
+  - 移除 `shared_preferences` 依赖
+
+- **Android: 新增"连接中..."状态显示**
+  - 重连过程中 header 显示橙色"连接中..."，替代直接显示"未连接"
+
+- **Android: UI 细节优化**
+  - 底部提示更新为"语音自动发送 · 回车手动发送"
+  - 硬编码 `Colors.white` 替换为主题 token `AppColors.textPrimary`
+  - 提取重复的文字样式为 `AppTextStyles` 常量
+  - 菜单项和菜单按钮添加显式涟漪反馈色
+
+### 修复
+
+- **PC: 托盘菜单首次右键卡顿**
+  - 问题：启动后首次右键托盘图标时菜单弹出有明显延迟
+  - 原因：Qt 延迟渲染机制导致首次 show() 时才编译 stylesheet 和计算布局
+  - 修复：启动时预热渲染菜单（屏幕外 show+hide），消除首次打开延迟
+
+---
+
 ## [2.5.0] - 2026-04-14
 
 ### 改进
