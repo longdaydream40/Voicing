@@ -33,10 +33,11 @@ class VoicingProtocol {
     typeSyncDisabled,
   };
 
-  static Map<String, dynamic> buildTextMessage(String content) {
+  static Map<String, dynamic> buildTextMessage(String content, {bool autoEnter = false}) {
     return {
       'type': typeText,
       'content': content,
+      'auto_enter': autoEnter,
     };
   }
 

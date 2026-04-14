@@ -92,7 +92,7 @@ def show_already_running_message():
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.5.1"
+APP_VERSION = "2.6.0"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -318,30 +318,40 @@ def set_startup_enabled(enabled: bool) -> bool:
 # ============================================================
 # Text Input / 文本输入
 # ============================================================
-def type_text(text: str):
+def type_text(text: str, auto_enter: bool = False):
     """
     Type text at current cursor position.
     在当前光标位置输入文本。
-    
+
     Uses pyautogui.write for ASCII and pyperclip+paste for Unicode.
+
+    Args:
+        text: Text to type
+        auto_enter: If True, press Enter after typing
     """
     if not text or not state.sync_enabled:
         return
-    
+
     try:
         # For Unicode support, use clipboard paste method
         import pyperclip
-        
+
         # Save current clipboard
         try:
             old_clipboard = pyperclip.paste()
         except Exception:
             old_clipboard = ""
-        
+
         # Copy new text and paste
         pyperclip.copy(text)
         pyautogui.hotkey('ctrl', 'v')
-        
+
+        # Auto press Enter if enabled
+        if auto_enter:
+            import time
+            time.sleep(0.05)  # Small delay before Enter
+            pyautogui.press('enter')
+
         # Small delay then restore clipboard
         import time
         time.sleep(0.1)
@@ -349,7 +359,7 @@ def type_text(text: str):
             pyperclip.copy(old_clipboard)
         except Exception:
             pass
-            
+
     except Exception as e:
         print(f"Error typing text: {e}")
 
@@ -391,9 +401,10 @@ async def handle_client(websocket):
                         continue
 
                     text = data.get("content", "")
+                    auto_enter = data.get("auto_enter", False)
                     if text:
                         # Type the received text (run in thread to avoid blocking event loop)
-                        await asyncio.to_thread(type_text, text)
+                        await asyncio.to_thread(type_text, text, auto_enter)
                         # Send acknowledgment
                         await websocket.send(json.dumps(build_ack_message()))
 

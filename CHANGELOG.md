@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0] - 2026-04-14
+
+### 新增
+
+- **自动 Enter 功能**
+  - Android: 菜单新增"自动 Enter"开关，默认关闭（红色 ✗）
+  - 点击切换状态，带淡入淡出 + 颜色渐变动画（红色 ✗ ↔ 绿色 ✓）
+  - 状态持久化到本地，App 重启后恢复上次设置
+  - PC: 接收到文本后，根据 `auto_enter` 标志自动按 Enter 键
+  - 通信协议: `TYPE_TEXT` 消息新增 `auto_enter` 字段
+
+---
+
 ## [2.5.1] - 2026-04-14
 
 ### 改进

@@ -307,6 +307,20 @@ class _MainPageState extends State<MainPage>
                                 _recallLastText();
                               },
                             ),
+                            const Divider(
+                              height: 1,
+                              color: AppColors.divider,
+                              indent: AppSpacing.md,
+                              endIndent: AppSpacing.md,
+                            ),
+                            _buildToggleMenuItem(
+                              icon: Icons.keyboard_return,
+                              text: '自动 Enter',
+                              isEnabled: _controller.autoEnterEnabled,
+                              onTap: () {
+                                _controller.toggleAutoEnter();
+                              },
+                            ),
                           ],
                         ),
                       ),
@@ -345,6 +359,66 @@ class _MainPageState extends State<MainPage>
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildToggleMenuItem({
+    required IconData icon,
+    required String text,
+    required bool isEnabled,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: const Color(0x1AFFFFFF),
+      highlightColor: const Color(0x0DFFFFFF),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.componentPadding),
+        child: Row(
+          children: [
+            Icon(icon, color: AppColors.textPrimary, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                text,
+                style: AppTextStyles.label,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _buildToggleIcon(isEnabled),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggleIcon(bool isEnabled) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 250),
+      tween: Tween<double>(begin: 0.0, end: isEnabled ? 1.0 : 0.0),
+      builder: (context, value, child) {
+        final color = Color.lerp(
+          AppColors.error,
+          AppColors.success,
+          value,
+        )!;
+
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          child: Icon(
+            isEnabled ? Icons.check : Icons.close,
+            key: ValueKey(isEnabled),
+            color: color,
+            size: 18,
+          ),
+        );
+      },
     );
   }
 

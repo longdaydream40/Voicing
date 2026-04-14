@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -30,6 +31,7 @@ class VoicingConnectionController extends ChangeNotifier {
   WebSocketChannel? _channel;
   ConnectionStatus _status = ConnectionStatus.disconnected;
   bool _syncEnabled = true;
+  bool _autoEnterEnabled = false;
   Timer? _reconnectTimer;
   String _serverIp = VoicingProtocol.defaultServerIp;
   int _serverPort = VoicingProtocol.websocketPort;
@@ -47,11 +49,13 @@ class VoicingConnectionController extends ChangeNotifier {
 
   ConnectionStatus get status => _status;
   bool get syncEnabled => _syncEnabled;
+  bool get autoEnterEnabled => _autoEnterEnabled;
   String get serverIp => _serverIp;
   int get serverPort => _serverPort;
   String get lastSentText => _lastSentText;
 
   Future<void> initialize() async {
+    await _loadAutoEnterPreference();
     await _startUdpDiscovery();
     _forceReconnect(resetBackoff: true, reason: 'init');
   }
@@ -87,7 +91,7 @@ class VoicingConnectionController extends ChangeNotifier {
     }
 
     try {
-      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(text)));
+      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(text, autoEnter: _autoEnterEnabled)));
       _lastSentText = text;
       _lastSentLength = 0;
     } catch (error, stackTrace) {
@@ -388,11 +392,34 @@ class VoicingConnectionController extends ChangeNotifier {
 
     final increment = currentText.substring(_lastSentLength);
     try {
-      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(increment)));
+      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(increment, autoEnter: _autoEnterEnabled)));
       _lastSentLength = currentText.length;
       _lastSentText = currentText;
     } catch (error, stackTrace) {
       AppLogger.warning('自动发送失败', error: error, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> _loadAutoEnterPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _autoEnterEnabled = prefs.getBool('auto_enter_enabled') ?? false;
+      AppLogger.info('加载自动 Enter 设置: $_autoEnterEnabled');
+    } catch (error, stackTrace) {
+      AppLogger.warning('加载自动 Enter 设置失败', error: error, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> toggleAutoEnter() async {
+    _autoEnterEnabled = !_autoEnterEnabled;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('auto_enter_enabled', _autoEnterEnabled);
+      AppLogger.info('保存自动 Enter 设置: $_autoEnterEnabled');
+    } catch (error, stackTrace) {
+      AppLogger.warning('保存自动 Enter 设置失败', error: error, stackTrace: stackTrace);
     }
   }
 

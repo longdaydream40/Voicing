@@ -64,10 +64,11 @@ def build_sync_disabled_message() -> dict:
     }
 
 
-def build_text_message(content: str) -> dict:
+def build_text_message(content: str, auto_enter: bool = False) -> dict:
     return {
         "type": TYPE_TEXT,
         "content": content,
+        "auto_enter": auto_enter,
     }
 
 
