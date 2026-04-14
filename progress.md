@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-04-14 会话
+
+### 会话目标
+全面检查仓库当前内容是否仍然最新，核对 Android APK 与 Windows EXE 源码是否保持稳定耦合，并基于实际代码与测试结果给出优化建议
+
+### 执行步骤
+
+#### Step 1: 恢复上下文并建立审计范围 ⏳
+- 读取 `task_plan.md`、`findings.md`、`progress.md`
+- 确认仓库由 `android/voice_coding`（Flutter Android）与 `pc`（Python/PyQt5 Windows）构成
+- 确认存在少量未提交本地变更：`.claude/settings.local.json`、`android/.../local.properties`、`pc/VoiceCoding.spec`
+- 已登记新的 Phase 6 审计任务，准备继续做版本、协议、测试与优化检查
+
+#### Step 2: 版本基线与协议结构排查 ⏳
+- 确认本地 `main` 与 `origin/main` 同步，远端最新标签仍为 `v2.4.2`
+- 确认双端通过 UDP `9530` + WebSocket `9527` + JSON 消息类型耦合，没有共享协议层
+- 核对消息类型发现：PC 端定义 `sync_disabled`，Android 端未显式处理该分支
+- 核对文档与依赖声明发现：`android/README.md` 的 Dart 版本描述与 `pubspec.yaml` 不完全一致，`pubspec.lock` 中 `flutter_launcher_icons` 已解析到 `0.14.4`
+
+#### Step 3: 直接修复低风险问题并复验 ✅
+- **协议修复**：PC `sync_disabled` 增加 `sync_enabled: false`；Android 显式处理 `sync_disabled`
+- **CI 修复**：`.github/workflows/release.yml` 的 changelog 提取改为 `vX.Y.Z` → `CHANGELOG` 中 `X.Y.Z`，并在缺失条目时 fail fast
+- **仓库治理**：将 `android/voice_coding/android/local.properties` 加入 `.gitignore`，并从 Git 跟踪中移除（保留本地文件）
+- **文档修复**：同步修正 README / Android README / llmdoc 中的错误命令、旧路径、版本说明与本机配置描述
+- **验证结果**：
+  - Android: `flutter test test/connection_recovery_policy_test.dart` → 4/4 通过
+  - Android: `flutter analyze --no-fatal-infos --no-fatal-warnings` → 仍为 16 条 info，无 error / warning
+  - PC: `python -m unittest tests.test_network_recovery` → 3/3 通过
+  - PC: `python -m py_compile voice_coding.py network_recovery.py` → 通过
+
+#### Step 4: 完成 v2.5.0 优化并通过发布前回归 ✅
+- 新增共享协议契约文件 `protocol/voicing_protocol_contract.json`
+- 新增 PC `voicing_protocol.py` 与 `tests/test_protocol_contract.py`
+- Android 新增 `app_theme.dart`、`app_logger.dart`、`voicing_protocol.dart`、`voicing_connection_controller.dart`
+- Android `main.dart` 拆分为 UI 组合层，移除生产代码中的 `print`
+- 修复 Android 菜单中“自动发送”开关与文字间距过近的问题
+- 升级并对齐依赖约束：
+  - Android: `web_socket_channel ^2.4.5`、`shared_preferences ^2.5.3`、`flutter_launcher_icons ^0.14.4`
+  - PC: `Pillow ~=12.2.0`、`pyinstaller ~=6.19.0`、`pyperclip ~=1.11.0`、`PyQt5 ~=5.15.11`
+- 最终回归结果：
+  - Android: `flutter pub get` → 通过
+  - Android: `flutter test` → 9/9 通过
+  - Android: `flutter analyze --no-fatal-infos --no-fatal-warnings` → 0 issue
+  - PC: `python -m pip install -r requirements.txt` → 通过，环境已对齐约束
+  - PC: `python -m unittest discover -s tests` → 7/7 通过
+  - PC: `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py` → 通过
+
+---
+
 ## 2026-04-11 会话
 
 ### 会话目标

@@ -2,10 +2,10 @@
 
 ## 开发环境准备
 
-1. 安装 Flutter 3.27.0 或更高版本
+1. 安装 Flutter stable（CI 当前锁定 3.27.0）
 2. 安装 Android SDK
 3. 使用 Java 17 或 21
-4. 如本机 Java 版本不兼容，可在 `android/local.properties` 中设置：
+4. 如本机 Java 版本不兼容，可在本地未跟踪的 `android/voice_coding/android/local.properties` 中设置：
 
 ```properties
 org.gradle.java.home=C:\\dev\\java21\\jdk-21.0.2
@@ -14,7 +14,7 @@ org.gradle.java.home=C:\\dev\\java21\\jdk-21.0.2
 ## 运行和调试
 
 ```powershell
-cd C:\Zero\Doc\Cloud\GitHub\Voice-Coding\android\voice_coding
+cd C:\Zero\Doc\Cloud\GitHub\Voicing\android\voice_coding
 flutter pub get
 flutter run
 ```
@@ -22,7 +22,7 @@ flutter run
 ## 推送前测试
 
 ```powershell
-cd C:\Zero\Doc\Cloud\GitHub\Voice-Coding\android\voice_coding
+cd C:\Zero\Doc\Cloud\GitHub\Voicing\android\voice_coding
 flutter test test/connection_recovery_policy_test.dart
 flutter analyze --no-fatal-infos --no-fatal-warnings
 ```

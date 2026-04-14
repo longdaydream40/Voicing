@@ -115,7 +115,7 @@ powershell -ExecutionPolicy Bypass -File ".claude/skills/pc-hot-restart/restart_
 Reason: PC is a long-running Python process, changes don't auto-apply.
 
 ### Flutter Java Version
-Use Java 17/21 for Flutter builds. Set in `android/voice_coding/android/local.properties`:
+Use Java 17/21 for Flutter builds. Set in your local untracked `android/voice_coding/android/local.properties`:
 ```properties
 org.gradle.java.home=C:\\dev\\java21\\jdk-21.0.2
 ```

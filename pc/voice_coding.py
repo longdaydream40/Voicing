@@ -38,6 +38,18 @@ from PIL import Image, ImageDraw
 import pyperclip
 
 from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
+from voicing_protocol import (
+    DEFAULT_SERVER_IP,
+    TYPE_PING,
+    TYPE_TEXT,
+    WEBSOCKET_PORT,
+    UDP_BROADCAST_PORT,
+    build_ack_message,
+    build_connected_message,
+    build_pong_message,
+    build_sync_disabled_message,
+    build_sync_state_message,
+)
 
 # ============================================================
 # Single Instance Check / 单实例检查
@@ -80,8 +92,8 @@ def show_already_running_message():
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.4.2"
-WS_PORT = 9527      # WebSocket port
+APP_VERSION = "2.5.0"
+WS_PORT = WEBSOCKET_PORT      # WebSocket port
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 # Disable pyautogui failsafe (moving to corner won't stop it)
@@ -144,9 +156,8 @@ def setup_logging():
 # Network Configuration / 网络配置
 # ============================================================
 # Windows Mobile Hotspot default IP / Windows 移动热点默认 IP
-DEFAULT_HOTSPOT_IP = "192.168.137.1"
+DEFAULT_HOTSPOT_IP = DEFAULT_SERVER_IP
 # UDP broadcast configuration / UDP 广播配置
-UDP_BROADCAST_PORT = 9530  # UDP 广播端口
 UDP_BROADCAST_INTERVAL = 2  # 广播间隔（秒）
 
 
@@ -363,25 +374,20 @@ async def handle_client(websocket):
         computer_name = socket.gethostname()
 
         # Send welcome message with current sync state and computer name
-        await websocket.send(json.dumps({
-            "type": "connected",
-            "message": "Connected to Voicing server",
-            "sync_enabled": state.sync_enabled,
-            "computer_name": computer_name
-        }))
+        await websocket.send(json.dumps(build_connected_message(
+            sync_enabled=state.sync_enabled,
+            computer_name=computer_name,
+        )))
 
         async for message in websocket:
             try:
                 data = json.loads(message)
                 msg_type = data.get("type", "")
 
-                if msg_type == "text":
+                if msg_type == TYPE_TEXT:
                     # Check if sync is enabled
                     if not state.sync_enabled:
-                        await websocket.send(json.dumps({
-                            "type": "sync_disabled",
-                            "message": "Sync is disabled on PC"
-                        }))
+                        await websocket.send(json.dumps(build_sync_disabled_message()))
                         continue
 
                     text = data.get("content", "")
@@ -389,17 +395,13 @@ async def handle_client(websocket):
                         # Type the received text (run in thread to avoid blocking event loop)
                         await asyncio.to_thread(type_text, text)
                         # Send acknowledgment
-                        await websocket.send(json.dumps({
-                            "type": "ack",
-                            "message": "Text received and typed"
-                        }))
+                        await websocket.send(json.dumps(build_ack_message()))
 
-                elif msg_type == "ping":
+                elif msg_type == TYPE_PING:
                     # Respond with pong and current sync state
-                    await websocket.send(json.dumps({
-                        "type": "pong",
-                        "sync_enabled": state.sync_enabled
-                    }))
+                    await websocket.send(json.dumps(build_pong_message(
+                        sync_enabled=state.sync_enabled,
+                    )))
 
             except json.JSONDecodeError:
                 # If not JSON, treat as plain text
@@ -419,10 +421,7 @@ async def broadcast_sync_state():
     if not state.connected_clients:
         return
     
-    message = json.dumps({
-        "type": "sync_state",
-        "sync_enabled": state.sync_enabled
-    })
+    message = json.dumps(build_sync_state_message(sync_enabled=state.sync_enabled))
     
     for client in state.connected_clients.copy():  # copy() 避免迭代时修改
         try:

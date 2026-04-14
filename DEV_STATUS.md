@@ -1,10 +1,10 @@
 # 开发状态 (Development Status)
 
-> 最后更新：2026-04-11
+> 最后更新：2026-04-14
 
-## v2.4.2 已发布
+## v2.5.0 已发布
 
-**最新 Release**: [v2.4.2](https://github.com/kevinlasnh/Voicing/releases/tag/v2.4.2)
+**最新 Release**: [v2.5.0](https://github.com/kevinlasnh/Voicing/releases/tag/v2.5.0)
 
 已发布文件：
 - `voicing.apk` - Android 安装包
@@ -36,10 +36,12 @@
 - [x] PC 端异步非阻塞输入（`asyncio.to_thread()`）
 
 ### 文档与测试
-- [x] CHANGELOG 更新到 v2.4.2
+- [x] CHANGELOG 更新到 v2.5.0
 - [x] README / llmdoc / Android 文档同步更新
 - [x] Android 连接恢复策略测试
 - [x] PC 广播恢复逻辑测试
+- [x] Android / PC 协议契约测试
+- [x] Android `main.dart` 架构拆分（协议 / 日志 / 连接控制器 / UI）
 
 ---
 
@@ -48,15 +50,15 @@
 ### Android
 ```bash
 cd android/voice_coding
-flutter test test/connection_recovery_policy_test.dart
+flutter test test/connection_recovery_policy_test.dart test/voicing_protocol_contract_test.dart
 flutter analyze --no-fatal-infos --no-fatal-warnings
 ```
 
 ### PC
 ```bash
 cd pc
-python -m unittest tests.test_network_recovery
-python -m py_compile voice_coding.py network_recovery.py
+python -m unittest tests.test_network_recovery tests.test_protocol_contract
+python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 ```
 
 ---
@@ -65,19 +67,19 @@ python -m py_compile voice_coding.py network_recovery.py
 
 ```bash
 git add .
-git commit -m "chore: release v2.4.2"
-git tag v2.4.2
+git commit -m "chore: release v2.5.0"
+git tag v2.5.0
 git push origin main
-git push origin v2.4.2
+git push origin v2.5.0
 ```
 
 标签推送后由 `.github/workflows/release.yml` 自动构建 APK 和 EXE，并创建 GitHub Release。
 
-本次发布结果：
-- Workflow: `Create Release`
-- Run: `24280956312`
-- Build Windows EXE: success
-- Build Android APK: success
+本次发布验证结果：
+- Android tests: pass
+- Android analyze: pass
+- PC tests: pass
+- PC py_compile: pass
 - Release: success
 
 ---
@@ -86,6 +88,7 @@ git push origin v2.4.2
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.5.0 | 2026-04-14 | 协议契约测试、Android 架构拆分、CI/文档修复、自动发送开关间距优化 |
 | v2.4.2 | 2026-04-11 | 修复休眠唤醒后的假断连，补充连接恢复测试 |
 | v2.4.1 | 2026-04-08 | UI 优化（设计常量、触摸反馈、菜单分组、键盘支持） |
 | v2.4.0 | 2026-04-08 | 全栈优化（断连修复、异步阻塞、代码清理） |

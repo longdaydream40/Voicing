@@ -9,11 +9,12 @@
 
 - `pc/voice_coding.py` `start_udp_broadcast()`: 周期性广播服务器信息
 - `pc/network_recovery.py`: 热点 IP 刷新与 UDP 广播负载生成
+- `pc/voicing_protocol.py`: PC 端协议常量与报文构造
 - `pc/voice_coding.py` `handle_client()`: WebSocket 消息处理
-- `android/voice_coding/lib/main.dart` `_connect()`: WebSocket 客户端连接逻辑
-- `android/voice_coding/lib/main.dart` `_handleMessage()`: WebSocket 消息处理
-- `android/voice_coding/lib/main.dart` `_handleUdpDiscovery()`: UDP 广播解析与恢复重连
+- `android/voice_coding/lib/voicing_protocol.dart`: Android 端协议常量与报文解析
+- `android/voice_coding/lib/voicing_connection_controller.dart`: WebSocket 客户端连接、消息处理与 UDP 恢复逻辑
 - `android/voice_coding/lib/connection_recovery_policy.dart`: Android 端连接恢复策略
+- `protocol/voicing_protocol_contract.json`: 双端共享协议契约
 
 ## 3. Execution Flow
 
@@ -68,3 +69,4 @@
 - **pong 合并同步状态**：减少额外消息数量。
 - **同 IP 恢复重连**：解决“WiFi 还在，但客户端没重新连上”的场景。
 - **动态广播热点 IP**：解决电脑网络恢复后继续广播旧地址的问题。
+- **协议契约测试**：在 Android / PC 两侧同时校验消息字段和端口，降低“看起来能跑、实际消息已漂移”的风险。

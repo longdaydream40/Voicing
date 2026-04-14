@@ -354,3 +354,109 @@ broadcast_data = build_udp_broadcast_payload(
 | Android | web_socket_channel | ^2.4.0 |
 
 **注**：v2.4.0 移除了 pystray 依赖，requirements.txt 版本约束从 `>=` 改为 `~=`
+
+---
+
+## 2026-04-14 审计发现
+
+### 1. 当前仓库与远端主线一致，但工作区非干净
+
+- 本地 `main` 指向 `95060ab`，与 `origin/main` 一致
+- 远端最新标签仍为 `v2.4.2`
+- 工作区存在未提交改动：
+  - `.claude/settings.local.json`
+  - `android/voice_coding/android/local.properties`
+  - `pc/VoiceCoding.spec`
+
+### 2. Android 与 PC 的真实耦合方式
+
+- 双端没有共享协议层或共享常量模块
+- 当前耦合完全依赖：
+  - UDP 广播发现：`9530`
+  - WebSocket 通信：`9527`
+  - 运行时 JSON 消息类型字符串
+- 这意味着“一致性”主要靠人工同步和测试，而不是编译期约束
+
+### 3. 已确认的协议对称点
+
+- PC 端会发送：`connected`、`ack`、`pong`、`sync_state`、`sync_disabled`
+- Android 端明确处理：`connected`、`ack`、`pong`、`sync_state`
+- 双端都实现了：
+  - Android `ping` / PC `pong`
+  - 文本 `text`
+  - `sync_enabled` 状态同步
+  - 基于 UDP 的自动发现与恢复
+
+### 4. 已发现的协议不对称点
+
+- Android 端未显式处理 PC 端定义的 `sync_disabled` 消息
+- 目前主要依赖先前的 `sync_state` / `pong` 把 `_syncEnabled` 置为 `false`，大多数场景可工作
+- 但如果用户在同步关闭状态刚传播前发送文本，PC 会回 `sync_disabled`，Android 当前只会忽略该消息
+
+### 5. 文档/声明与代码的初步差异
+
+- `android/README.md` 声称技术栈为 `Dart 3.6.0`，而 `pubspec.yaml` 只声明 `sdk: ^3.5.4`
+- `pubspec.yaml` 里写的是 `flutter_launcher_icons: ^0.14.3`，但 `pubspec.lock` 已解析到 `0.14.4`
+- README / DEV_STATUS / llmdoc / CHANGELOG 目前都仍以 `v2.4.2` 为最新版本
+
+### 6. 依赖与工具链的最新性结论
+
+- Android 本机环境：
+  - `flutter --version` = `3.24.5`
+  - `Dart` = `3.5.4`
+- `flutter pub outdated` 结果显示：
+  - `cupertino_icons` 当前 `1.0.8`，最新 `1.0.9`
+  - `shared_preferences` 当前 `2.5.3`，最新 `2.5.5`
+  - `web_socket_channel` 当前 `2.4.5`，最新 `3.0.3`
+  - `flutter_lints` 当前 `4.0.0`，最新 `6.0.0`
+- Python 侧 `pip index versions` 结果显示：
+  - `PyInstaller` 最新 `6.19.0`，当前环境已装 `6.18.0`
+  - `Pillow` 最新 `12.2.0`，当前环境已装 `12.1.0`
+  - `PyQt5` 最新 `5.15.11`，当前环境已装 `5.15.11`
+  - `PyAutoGUI` 最新仍为 `0.9.54`
+  - `pyperclip` 最新 `1.11.0`
+  - `websockets` 最新 `16.0`
+- 结论：仓库并非“所有内容都最新”，尤其 Flutter/Dart 与多项依赖版本说明已经落后；但不应在未做兼容性验证前盲目升大版本
+
+### 7. 已执行的低风险修复
+
+- **协议耦合修复**
+  - PC 端 `sync_disabled` 响应加入 `sync_enabled: false`
+  - Android 端显式处理 `sync_disabled`，避免同步开关状态在竞争窗口中失真
+- **GitHub Actions 修复**
+  - `release.yml` 现在会把 Git 标签 `v2.4.2` 映射到 `CHANGELOG.md` 的 `## [2.4.2]`
+  - 若缺少对应 changelog 条目，工作流会直接失败，不再静默生成空 release notes
+- **仓库卫生修复**
+  - `android/voice_coding/android/local.properties` 已加入 `.gitignore`
+  - 该文件已从版本控制中移除，但保留本地工作副本
+- **文档同步修复**
+  - 修正本地 EXE 打包命令缺少图标与资源参数的问题
+  - 修正 Android README 中错误的目录、EXE 名称与 Dart/Flutter 版本描述
+  - 修正 llmdoc 中 `Voice-Coding` 旧路径和 `local.properties` 跟踪方式描述
+
+### 8. v2.5.0 的结构性优化结果
+
+- **Android 架构**
+  - 连接状态机、UDP 发现、心跳与自动发送逻辑已迁入 `voicing_connection_controller.dart`
+  - `main.dart` 现仅负责界面、菜单动画和输入区域组合
+  - `app_logger.dart` 已替换生产代码中的 `print`
+  - `app_theme.dart` / `voicing_protocol.dart` 已把主题与协议常量抽离
+- **协议耦合**
+  - 仓库新增共享契约文件 `protocol/voicing_protocol_contract.json`
+  - Android / PC 两端都新增契约测试，当前通过
+  - 当前耦合方式仍然是“共享契约文件 + 双端测试”，不是自动生成代码；但已经明显优于原先的纯字符串散落模式
+- **UI 细节**
+  - Android 菜单中“自动发送”文本与开关之间已增加固定间距，避免按钮紧贴文字
+
+### 9. 发布前最终验证结论
+
+- Android：
+  - `flutter test` 全部通过（9/9）
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings` 无 issue
+- PC：
+  - `python -m unittest discover -s tests` 全部通过（7/7）
+  - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py` 通过
+  - 依赖环境已重新安装并与 `requirements.txt` 对齐
+- 结论：
+  - APK 与 EXE 的核心耦合链路（UDP 发现、WebSocket 端口、消息类型、关键字段）在当前仓库状态下没有发现新的协议不一致问题
+  - 仍未做到“单一源码生成双端协议代码”，但已达到可发布、可维护、可回归验证的状态

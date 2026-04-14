@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.0] - 2026-04-14
+
+### 改进
+
+- **Android 架构拆分**
+  - `main.dart` 仅保留 UI 组合逻辑
+  - 新增 `voicing_connection_controller.dart` 承担连接状态机、自动发送和 UDP 恢复逻辑
+  - 新增 `app_theme.dart` 抽离设计 token 与主题
+  - 新增 `app_logger.dart`，移除生产代码中的 `print`
+
+- **双端协议耦合加固**
+  - 新增共享协议契约文件 `protocol/voicing_protocol_contract.json`
+  - Android 新增 `voicing_protocol.dart` 统一协议常量与报文解析
+  - PC 新增 `voicing_protocol.py` 统一端口、消息类型与报文构造
+  - Android / PC 分别新增协议契约测试，避免消息结构再次漂移
+  - Android 端显式处理 `sync_disabled`，PC 端补充 `sync_enabled: false`
+
+- **UI 细节优化**
+  - 修复 Android 菜单中“自动发送”文字与开关过于贴近的问题，增加稳定间距
+
+### 修复
+
+- **GitHub Actions Release Notes**
+  - 修复标签 `vX.Y.Z` 与 `CHANGELOG.md` 中 `[X.Y.Z]` 的提取不一致问题
+  - 当 changelog 缺少对应版本条目时，工作流会直接失败而不是生成空说明
+
+- **仓库配置卫生**
+  - `android/voice_coding/android/local.properties` 改为本地未跟踪文件，不再进入版本控制
+  - 同步修正文档中本地 Java 配置与打包命令描述
+
+### 测试
+
+- Android：
+  - `flutter test test/connection_recovery_policy_test.dart test/voicing_protocol_contract_test.dart`
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+- PC：
+  - `python -m unittest tests.test_network_recovery tests.test_protocol_contract`
+  - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py`
+
+---
+
 ## [2.4.2] - 2026-04-11
 
 ### 修复

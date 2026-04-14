@@ -15,10 +15,10 @@
 
 ```bash
 git add .
-git commit -m "chore: release v2.4.2"
-git tag v2.4.2
+git commit -m "chore: release v2.5.0"
+git tag v2.5.0
 git push origin main
-git push origin v2.4.2
+git push origin v2.5.0
 ```
 
 ## 推送前测试
@@ -27,7 +27,7 @@ git push origin v2.4.2
 
 ```bash
 cd android/voice_coding
-flutter test test/connection_recovery_policy_test.dart
+flutter test test/connection_recovery_policy_test.dart test/voicing_protocol_contract_test.dart
 flutter analyze --no-fatal-infos --no-fatal-warnings
 ```
 
@@ -35,8 +35,8 @@ flutter analyze --no-fatal-infos --no-fatal-warnings
 
 ```bash
 cd pc
-python -m unittest tests.test_network_recovery
-python -m py_compile voice_coding.py network_recovery.py
+python -m unittest tests.test_network_recovery tests.test_protocol_contract
+python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 ```
 
 ## 常见问题
@@ -44,7 +44,7 @@ python -m py_compile voice_coding.py network_recovery.py
 ### Java 版本不兼容
 
 - 症状：Gradle 报 `25.0.1`
-- 处理：本地开发时在 `android/local.properties` 设置 Java 21 路径
+- 处理：本地开发时在未跟踪的 `android/voice_coding/android/local.properties` 设置 Java 21 路径
 - 说明：CI 使用 GitHub Actions 中固定的 Java 17，不依赖本机环境
 
 ### Release 没有产物

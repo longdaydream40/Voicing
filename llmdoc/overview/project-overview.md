@@ -4,7 +4,7 @@
 
 Voicing 是一款让手机语音输入直接出现在电脑光标位置的双端工具，适合与 AI 对话、长文输入和轻量办公场景。
 
-当前目标版本：`v2.4.2`
+当前目标版本：`v2.5.0`
 
 ## 2. 技术栈
 
@@ -16,7 +16,7 @@ Voicing 是一款让手机语音输入直接出现在电脑光标位置的双端
 
 ### Android 端
 - **语言**: Dart
-- **框架**: Flutter 3.27.0
+- **框架**: Flutter stable（CI 当前锁定 3.27.0）
 - **网络**: `web_socket_channel` + `RawDatagramSocket`
 - **持久化**: `shared_preferences`
 
@@ -32,14 +32,13 @@ Voicing 是一款让手机语音输入直接出现在电脑光标位置的双端
 
 ## 4. 当前版本重点
 
-### v2.4.2
+### v2.5.0
 
-- 修复 Android 休眠唤醒后的假断连
-- Android 返回前台时强制重建连接
-- Android 连接建立增加 8 秒超时
-- Android 同 IP UDP 广播可触发恢复重连
-- PC 每轮 UDP 广播刷新热点 IP
-- 新增 Android / PC 两侧连接恢复测试
+- Android 端拆分为 UI / 连接控制器 / 协议 / 日志模块
+- 新增 Android / PC 双端协议契约测试
+- GitHub Actions release notes 提取逻辑修复
+- `local.properties` 改为本地未跟踪文件
+- 菜单中“自动发送”开关间距优化
 
 ## 5. 发布方式
 

@@ -1,0 +1,51 @@
+{
+  "ports": {
+    "websocket": 9527,
+    "udp_broadcast": 9530
+  },
+  "udp_discovery": {
+    "type": "voice_coding_server",
+    "required_fields": [
+      "type",
+      "ip",
+      "port",
+      "name"
+    ]
+  },
+  "messages": {
+    "client_to_server": {
+      "text": [
+        "type",
+        "content"
+      ],
+      "ping": [
+        "type"
+      ]
+    },
+    "server_to_client": {
+      "connected": [
+        "type",
+        "message",
+        "sync_enabled",
+        "computer_name"
+      ],
+      "ack": [
+        "type",
+        "message"
+      ],
+      "pong": [
+        "type",
+        "sync_enabled"
+      ],
+      "sync_state": [
+        "type",
+        "sync_enabled"
+      ],
+      "sync_disabled": [
+        "type",
+        "sync_enabled",
+        "message"
+      ]
+    }
+  }
+}

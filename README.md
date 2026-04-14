@@ -157,10 +157,10 @@ flutter run
 
 ```bash
 git add .
-git commit -m "chore: release v2.4.2"
-git tag v2.4.2
+git commit -m "chore: release v2.5.0"
+git tag v2.5.0
 git push origin main
-git push origin v2.4.2
+git push origin v2.5.0
 ```
 
 推送标签后会自动构建 `voicing.apk` 和 `voicing.exe` 并创建 Release。
@@ -170,12 +170,14 @@ git push origin v2.4.2
 ```bash
 # PC 端打包
 cd pc
-pyinstaller --onefile --windowed --name=VoiceCoding voice_coding.py
+pyinstaller --onefile --windowed --name=VoiceCoding --icon=assets/icon.ico --add-data "assets;assets" voice_coding.py
 
 # Android 端打包
 cd android/voice_coding
 flutter build apk --release
 ```
+
+如本机 Flutter/Gradle 的 Java 版本不兼容，请在本地未跟踪的 `android/voice_coding/android/local.properties` 中设置 `org.gradle.java.home=...`。
 
 ## ❓ 常见问题
 

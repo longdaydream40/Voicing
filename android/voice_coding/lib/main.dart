@@ -1,83 +1,24 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' show pi;
+
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_theme.dart';
 import 'connection_recovery_policy.dart';
-
-// ============================================================
-// Design Tokens - 4px grid system
-// ============================================================
-class AppSpacing {
-  static const double xs = 4;
-  static const double sm = 8;
-  static const double md = 16;
-  static const double lg = 24;
-  static const double xl = 32;
-  static const double componentPadding = 14;
-  static const double componentGap = 12;
-  static const double borderRadius = 12;
-}
-
-class AppColors {
-  static const Color surface = Color(0xFF3D3B37);
-  static const Color background = Color(0xFF000000);
-  static const Color inputFill = Color(0xFF2D2B28);
-  static const Color textPrimary = Color(0xFFECECEC);
-  static const Color textHint = Color(0xFF6B6B6B);
-  static const Color primary = Color(0xFFD97757);
-  static const Color success = Color(0xFF5CB87A);
-  static const Color warning = Color(0xFFE5A84B);
-  static const Color error = Color(0xFFE85C4A);
-  static const Color divider = Color(0x14FFFFFF); // white 8% opacity
-}
+import 'voicing_connection_controller.dart';
 
 void main() {
-  runApp(const VoiceCodingApp());
+  runApp(const VoicingApp());
 }
 
-class VoiceCodingApp extends StatelessWidget {
-  const VoiceCodingApp({super.key});
+class VoicingApp extends StatelessWidget {
+  const VoicingApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Voicing',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorScheme: const ColorScheme.dark(
-          primary: const Color(0xFFD97757),
-          secondary: const Color(0xFFD97757),
-          surface: const Color(0xFF343330),
-          error: const Color(0xFFE85C4A),
-        ),
-        scaffoldBackgroundColor: const Color(0xFF000000),
-        cardColor: const Color(0xFF343330),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFF2D2B28),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFD97757)),
-          ),
-          hintStyle: const TextStyle(color: Color(0xFF6B6B6B)),
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: Color(0xFFECECEC), fontSize: 16),
-          bodyMedium: TextStyle(color: Color(0xFFECECEC), fontSize: 14),
-          titleLarge: TextStyle(color: Color(0xFFECECEC), fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-      ),
+      theme: buildAppTheme(),
       home: const MainPage(),
     );
   }
@@ -90,55 +31,25 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends State<MainPage> with WidgetsBindingObserver, TickerProviderStateMixin {
-  final TextEditingController _textController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  final GlobalKey _menuButtonKey = GlobalKey();  // 用于获取按钮位置
+class _MainPageState extends State<MainPage>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
+  final GlobalKey _menuButtonKey = GlobalKey();
 
-  WebSocketChannel? _channel;
-  ConnectionStatus _status = ConnectionStatus.disconnected;
-  bool _syncEnabled = true;
-  Timer? _reconnectTimer;
-  String _serverIp = '192.168.137.1';  // 默认 IP，会被 UDP 发现覆盖
-  int _serverPort = 9527;
-  String _lastSentText = '';  // 保存上次发送的文本
-  bool _showMenu = false;  // 是否显示下拉菜单
-  bool _shadowModeEnabled = false;  // 自动发送开关
-  int _lastSentLength = 0;  // 自动发送：已发送的字符数
-  bool _wasComposing = false;  // 自动发送：上一次是否有组合文本（带下划线）
-  RawDatagramSocket? _udpSocket;  // UDP 监听套接字
-  StreamSubscription<RawSocketEvent>? _udpSubscription;  // UDP 订阅
-  static const int _udpBroadcastPort = 9530;  // UDP 广播端口
+  late final VoicingConnectionController _controller;
+  late final AnimationController _menuAnimationController;
+  late final Animation<double> _menuSlideAnimation;
+  late final Animation<double> _menuFadeAnimation;
 
-  // 心跳机制
-  Timer? _heartbeatTimer;
-  DateTime? _lastPong;
-  static const int _heartbeatIntervalSec = 15;
-  static const int _heartbeatTimeoutSec = 30;
-  static const int _connectTimeoutSec = 8;
-
-  // 重连策略
-  int _reconnectAttempt = 0;
-  static const int _maxReconnectDelaySec = 30;
-  static const int _udpReconnectCooldownMs = 3000;
-  int _connectionGeneration = 0;
-  DateTime? _lastConnectStartedAt;
-  final ConnectionRecoveryPolicy _recoveryPolicy = const ConnectionRecoveryPolicy(
-    heartbeatTimeout: Duration(seconds: _heartbeatTimeoutSec),
-    udpReconnectCooldown: Duration(milliseconds: _udpReconnectCooldownMs),
-  );
-
-  // 动画相关
-  late AnimationController _menuAnimationController;
-  late Animation<double> _menuSlideAnimation;
-  late Animation<double> _menuFadeAnimation;
+  bool _showMenu = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // 初始化菜单动画
+    _controller = VoicingConnectionController();
+    _controller.addListener(_handleControllerUpdate);
+
     _menuAnimationController = AnimationController(
       duration: const Duration(milliseconds: 250),
       vsync: this,
@@ -152,353 +63,53 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
       curve: Curves.easeOut,
     );
 
-    // 监听文本控制器变化（包括 composing 状态）
-    _textController.addListener(_onTextControllerChanged);
-
-    // 加载用户偏好设置
-    _loadPreferences();
-
-    // 启动 UDP 发现监听
-    _startUdpDiscovery();
-
-    // 开始连接（可能在 UDP 发现后会被重新触发）
-    _forceReconnect(resetBackoff: true, reason: 'init');
-  }
-
-  /// 加载用户偏好设置
-  Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _shadowModeEnabled = prefs.getBool('autoSendEnabled') ?? false;
-    });
-  }
-
-  /// 保存自动发送开关状态
-  Future<void> _saveAutoSendPreference(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('autoSendEnabled', value);
+    _controller.initialize();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _reconnectTimer?.cancel();
-    _heartbeatTimer?.cancel();
-    _textController.removeListener(_onTextControllerChanged);
-    _connectionGeneration++;
-    _channel?.sink.close();
-    _textController.dispose();
-    _scrollController.dispose();
+    _controller.removeListener(_handleControllerUpdate);
+    _controller.dispose();
     _menuAnimationController.dispose();
-    _udpSubscription?.cancel();
-    _udpSocket?.close();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      // 进入后台/息屏：停止心跳省电
-      _stopHeartbeat();
-    } else if (state == AppLifecycleState.resumed && _recoveryPolicy.shouldForceReconnectOnResume()) {
-      // 回到前台：不要信任休眠前的旧 socket，直接重建连接。
-      _forceReconnect(resetBackoff: true, reason: 'app resumed');
+    _controller.handleLifecycleState(state);
+  }
+
+  void _handleControllerUpdate() {
+    if (mounted) {
+      setState(() {});
     }
   }
 
-  void _forceReconnect({
-    bool resetBackoff = false,
-    String reason = '',
-  }) {
-    if (resetBackoff) {
-      _reconnectAttempt = 0;
-    }
-
-    if (reason.isNotEmpty) {
-      print('开始重连: $reason');
-    }
-
-    _connect();
-  }
-
-  void _connect() {
-    final int connectionId = ++_connectionGeneration;
-    _lastConnectStartedAt = DateTime.now();
-
-    setState(() => _status = ConnectionStatus.connecting);
-
-    // Close old connection if exists
-    _reconnectTimer?.cancel();
-    _stopHeartbeat();
-    _channel?.sink.close();
-    _lastPong = null;
-
-    try {
-      _channel = IOWebSocketChannel.connect(
-        Uri.parse('ws://$_serverIp:$_serverPort'),
-        connectTimeout: const Duration(seconds: _connectTimeoutSec),
-      );
-
-      _channel!.stream.listen(
-        (message) {
-          _handleMessage(message, connectionId);
-        },
-        onError: (error) {
-          if (connectionId != _connectionGeneration) return;
-          print('WebSocket error: $error');
-          _handleDisconnect(connectionId: connectionId);
-        },
-        onDone: () {
-          if (connectionId != _connectionGeneration) return;
-          _handleDisconnect(connectionId: connectionId);
-        },
-      );
-    } catch (e) {
-      if (connectionId != _connectionGeneration) return;
-      print('Connection error: $e');
-      _handleDisconnect(connectionId: connectionId);
-    }
-  }
-
-  void _handleMessage(dynamic message, int connectionId) {
-    if (connectionId != _connectionGeneration) {
+  void _toggleMenu() {
+    if (_showMenu) {
+      _closeMenu();
       return;
     }
 
-    try {
-      final data = json.decode(message);
-      final type = data['type'];
-
-      if (type == 'connected') {
-        setState(() {
-          _status = ConnectionStatus.connected;
-          _syncEnabled = data['sync_enabled'] ?? true;
-        });
-        _reconnectAttempt = 0;
-        _lastPong = DateTime.now();
-        _startHeartbeat();
-      } else if (type == 'ack') {
-        _textController.clear();
-      } else if (type == 'sync_state' || type == 'pong') {
-        _lastPong = DateTime.now();
-        setState(() {
-          _syncEnabled = data['sync_enabled'] ?? true;
-        });
-      }
-    } catch (e) {
-      print('Message parse error: $e');
-    }
+    setState(() => _showMenu = true);
+    _menuAnimationController.forward();
   }
 
-  void _handleDisconnect({int? connectionId}) {
-    if (connectionId != null && connectionId != _connectionGeneration) {
-      return;
-    }
-
-    _stopHeartbeat();
-
-    if (_status == ConnectionStatus.disconnected) return;  // 防止重复触发
-
-    setState(() {
-      _status = ConnectionStatus.disconnected;
-      _syncEnabled = true;
-    });
-
-    // 指数退避重连：3s → 6s → 12s → 24s → 30s(上限)
-    final delaySec = (_reconnectAttempt < 5)
-        ? 3 * (1 << _reconnectAttempt)
-        : _maxReconnectDelaySec;
-    _reconnectAttempt++;
-
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(Duration(seconds: delaySec.clamp(3, _maxReconnectDelaySec)), () {
-      if (_status == ConnectionStatus.disconnected) {
-        _connect();
+  void _closeMenu() {
+    _menuAnimationController.reverse().then((_) {
+      if (mounted) {
+        setState(() => _showMenu = false);
       }
     });
   }
 
-  /// 启动心跳定时器
-  void _startHeartbeat() {
-    _stopHeartbeat();
-    _heartbeatTimer = Timer.periodic(
-      const Duration(seconds: _heartbeatIntervalSec),
-      (_) => _checkHeartbeat(),
-    );
+  void _refreshConnection() {
+    _controller.refreshConnection();
   }
 
-  /// 停止心跳定时器
-  void _stopHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-  }
-
-  /// 心跳检测：发 ping 并检查超时
-  void _checkHeartbeat() {
-    if (_status != ConnectionStatus.connected) {
-      _stopHeartbeat();
-      return;
-    }
-
-    // 检查上次 pong 是否超时
-    final now = DateTime.now();
-    if (_recoveryPolicy.isHeartbeatExpired(
-      status: _status,
-      lastPong: _lastPong,
-      now: now,
-    )) {
-      final elapsed = _lastPong == null ? 0 : now.difference(_lastPong!).inSeconds;
-      print('心跳超时 (${elapsed}s)，判定连接死亡');
-      _handleDisconnect();
-      return;
-    }
-
-    _sendPing();
-  }
-
-  /// 发送 ping 消息
-  void _sendPing() {
-    try {
-      _channel?.sink.add(json.encode({'type': 'ping'}));
-    } catch (e) {
-      print('Ping 发送失败: $e');
-      _handleDisconnect();
-    }
-  }
-
-  /// 启动 UDP 发现监听
-  /// 监听 PC 端的 UDP 广播，自动获取服务器 IP 和端口
-  void _startUdpDiscovery() async {
-    try {
-      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _udpBroadcastPort);
-      _udpSocket!.broadcastEnabled = true;
-      _udpSocket!.multicastLoopback = true;
-
-      print('UDP 发现监听已启动，端口: $_udpBroadcastPort');
-
-      _udpSubscription = _udpSocket!.listen((RawSocketEvent event) {
-        if (event == RawSocketEvent.read) {
-          final datagram = _udpSocket!.receive();
-          if (datagram != null) {
-            final message = utf8.decode(datagram.data);
-            _handleUdpDiscovery(message, datagram.address.address);
-          }
-        }
-      });
-    } catch (e) {
-      print('UDP 发现启动失败: $e');
-      // 如果 UDP 启动失败，仍然可以使用默认 IP 连接
-    }
-  }
-
-  /// 处理 UDP 发现消息
-  void _handleUdpDiscovery(String message, String sourceIp) {
-    try {
-      final data = json.decode(message);
-      if (data['type'] == 'voice_coding_server') {
-        final discoveredIp = data['ip'] as String?;
-        final discoveredPort = data['port'] as int?;
-
-        if (discoveredIp != null && discoveredPort != null) {
-          final bool serverChanged = _serverIp != discoveredIp || _serverPort != discoveredPort;
-          final bool shouldReconnectFromBroadcast = _recoveryPolicy.shouldReconnectFromUdp(
-            serverChanged: serverChanged,
-            status: _status,
-            lastConnectStartedAt: _lastConnectStartedAt,
-            now: DateTime.now(),
-          );
-
-          if (serverChanged) {
-            print('UDP 发现服务器: $discoveredIp:$discoveredPort (来源: $sourceIp)');
-            setState(() {
-              _serverIp = discoveredIp;
-              _serverPort = discoveredPort;
-            });
-          }
-
-          // 即使 IP 没变，只要当前没连上，也要允许广播把连接拉回来。
-          if (shouldReconnectFromBroadcast) {
-            _reconnectTimer?.cancel();
-            _forceReconnect(
-              resetBackoff: true,
-              reason: serverChanged ? 'udp server update' : 'udp recovery probe',
-            );
-          }
-        }
-      }
-    } catch (e) {
-      print('UDP 消息解析失败: $e');
-    }
-  }
-  void _sendText() {
-    final text = _textController.text.trim();
-    if (text.isEmpty || _status != ConnectionStatus.connected || !_syncEnabled) {
-      return;
-    }
-
-    try {
-      _channel!.sink.add(json.encode({
-        'type': 'text',
-        'content': text,
-      }));
-      // 保存文本用于撤回
-      _lastSentText = text;
-      // 重置自动发送已发送长度（因为文本框会被清空���
-      _lastSentLength = 0;
-    } catch (e) {
-      print('发送失败: $e');
-      _handleDisconnect();
-    }
-  }
-
-  /// 自动发送：监听文本控制器变化，检测 composing 状态
-  void _onTextControllerChanged() {
-    final currentText = _textController.text;
-
-    // 如果文本长度小于已发送长度，说明文本被清空或删除了，需要重置
-    if (currentText.length < _lastSentLength) {
-      _lastSentLength = currentText.length;
-    }
-
-    if (!_shadowModeEnabled || _status != ConnectionStatus.connected || !_syncEnabled) {
-      return;
-    }
-
-    // 检查当前是否有组合文本（带下划线）
-    final composing = _textController.value.composing;
-    final isComposing = composing.isValid && !composing.isCollapsed;
-
-    // 检测：从"有组合文本"变成"无组合文本"（下划线消失）
-    if (_wasComposing && !isComposing) {
-      // 输入法完成了输入，发送增量
-      _sendShadowIncrement(currentText);
-    }
-
-    // 更新状态
-    _wasComposing = isComposing;
-  }
-
-  /// 发送自动发送的增量内容
-  void _sendShadowIncrement(String currentText) {
-    // 只发送新增的部分
-    if (currentText.length <= _lastSentLength) {
-      return;  // 没有新增内容
-    }
-
-    String increment = currentText.substring(_lastSentLength);
-
-    try {
-      _channel!.sink.add(json.encode({
-        'type': 'text',
-        'content': increment,
-      }));
-      // 更新已发送长度
-      _lastSentLength = currentText.length;
-      // 保存当前文本用于撤回（自动发送模式下也能撤回）
-      _lastSentText = currentText;
-    } catch (e) {
-      print('自动发送失败: $e');
-    }
+  void _recallLastText() {
+    _controller.recallLastText();
   }
 
   @override
@@ -506,7 +117,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     return Scaffold(
       body: Stack(
         children: [
-          // 主界面
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(AppSpacing.md),
@@ -514,16 +124,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                 children: [
                   _buildHeader(),
                   const SizedBox(height: AppSpacing.componentGap),
-                  Expanded(
-                    child: _buildInputArea(),
-                  ),
+                  Expanded(child: _buildInputArea()),
                   const SizedBox(height: AppSpacing.md),
                   _buildEnterHint(),
                 ],
               ),
             ),
           ),
-          // 下拉菜单（最顶层）
           if (_showMenu) _buildDropdownMenuOverlay(),
         ],
       ),
@@ -531,13 +138,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
   }
 
   Widget _buildHeader() {
-    // 连接状态
-    Color connectionDotColor;
-    String connectionText;
-    final bool showSyncWarning = _status == ConnectionStatus.connected && !_syncEnabled;
+    final bool showSyncWarning =
+        _controller.status == ConnectionStatus.connected &&
+            !_controller.syncEnabled;
 
-    if (_status == ConnectionStatus.connected) {
-      connectionDotColor = showSyncWarning ? AppColors.warning : AppColors.success;
+    late final Color connectionDotColor;
+    late final String connectionText;
+    if (_controller.status == ConnectionStatus.connected) {
+      connectionDotColor =
+          showSyncWarning ? AppColors.warning : AppColors.success;
       connectionText = showSyncWarning ? '同步关闭' : '已连接';
     } else {
       connectionDotColor = AppColors.error;
@@ -546,7 +155,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
 
     return Row(
       children: [
-        // 左侧：连接状态
         Expanded(
           child: Container(
             padding: const EdgeInsets.all(AppSpacing.componentPadding),
@@ -572,27 +180,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
           ),
         ),
         const SizedBox(width: AppSpacing.componentGap),
-        // 右侧：更多菜单按钮
-        Expanded(
-          child: _buildMenuButton(),
-        ),
+        Expanded(child: _buildMenuButton()),
       ],
     );
-  }
-
-  void _refreshConnection() {
-    _forceReconnect(resetBackoff: true, reason: 'manual refresh');
-  }
-
-  void _recallLastText() {
-    // 从本地恢复上次发送的文本
-    if (_lastSentText.isNotEmpty) {
-      _textController.text = _lastSentText;
-      // 移动光标到末尾
-      _textController.selection = TextSelection.fromPosition(
-        TextPosition(offset: _lastSentText.length),
-      );
-    }
   }
 
   Widget _buildMenuButton() {
@@ -602,42 +192,36 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
       borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
-        onTap: () {
-          if (_showMenu) {
-            _menuAnimationController.reverse().then((_) {
-              setState(() => _showMenu = false);
-            });
-          } else {
-            setState(() => _showMenu = true);
-            _menuAnimationController.forward();
-          }
-        },
+        onTap: _toggleMenu,
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.componentPadding),
           constraints: const BoxConstraints(minHeight: 44),
           child: Row(
             children: [
-              // 箭头图标（带旋转动画）
               AnimatedBuilder(
                 animation: _menuAnimationController,
                 builder: (context, child) {
                   return Transform.rotate(
                     angle: _menuAnimationController.value * (pi / 2),
-                    child: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.white,
-                      size: 18,
-                    ),
+                    child: child,
                   );
                 },
+                child: const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white,
+                  size: 18,
+                ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              const Text(
-                '更多功能操作',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
+              const Expanded(
+                child: Text(
+                  '更多功能操作',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ],
@@ -648,29 +232,25 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
   }
 
   Widget _buildDropdownMenuOverlay() {
-    // 获取按钮位置和大小
-    final RenderBox? renderBox =
+    final renderBox =
         _menuButtonKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return const SizedBox.shrink();
+    if (renderBox == null) {
+      return const SizedBox.shrink();
+    }
 
-    final Offset offset = renderBox.localToGlobal(Offset.zero);
-    final Size size = renderBox.size;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
 
     return SizedBox.expand(
       child: FadeTransition(
         opacity: _menuFadeAnimation,
         child: GestureDetector(
-          onTap: () {
-            _menuAnimationController.reverse().then((_) {
-              setState(() => _showMenu = false);
-            });
-          },
+          onTap: _closeMenu,
           behavior: HitTestBehavior.translucent,
           child: Container(
             color: Colors.black54,
             child: Stack(
               children: [
-                // 下拉菜单
                 Positioned(
                   left: offset.dx,
                   top: offset.dy + size.height + AppSpacing.sm,
@@ -679,7 +259,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                     animation: _menuSlideAnimation,
                     builder: (context, child) {
                       return Transform.translate(
-                        offset: Offset(0, -20 * (1 - _menuSlideAnimation.value)),
+                        offset:
+                            Offset(0, -20 * (1 - _menuSlideAnimation.value)),
                         child: Opacity(
                           opacity: _menuSlideAnimation.value,
                           child: child,
@@ -691,7 +272,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                       child: Container(
                         decoration: BoxDecoration(
                           color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(AppSpacing.borderRadius),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.borderRadius,
+                          ),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.3),
@@ -711,7 +294,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                                 _refreshConnection();
                               },
                             ),
-                            const Divider(height: 1, color: AppColors.divider, indent: AppSpacing.md, endIndent: AppSpacing.md),
+                            const Divider(
+                              height: 1,
+                              color: AppColors.divider,
+                              indent: AppSpacing.md,
+                              endIndent: AppSpacing.md,
+                            ),
                             _buildMenuItem(
                               icon: Icons.undo,
                               text: '撤回上次输入',
@@ -720,23 +308,18 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                                 _recallLastText();
                               },
                             ),
-                            const Divider(height: 1, color: AppColors.divider, indent: AppSpacing.md, endIndent: AppSpacing.md),
+                            const Divider(
+                              height: 1,
+                              color: AppColors.divider,
+                              indent: AppSpacing.md,
+                              endIndent: AppSpacing.md,
+                            ),
                             _buildSwitchMenuItem(
                               icon: Icons.send,
                               text: '自动发送',
-                              value: _shadowModeEnabled,
+                              value: _controller.shadowModeEnabled,
                               onChanged: (value) {
-                                setState(() {
-                                  _shadowModeEnabled = value;
-                                  if (value) {
-                                    _lastSentLength = _textController.text.length;
-                                    _wasComposing = false;
-                                  } else {
-                                    _lastSentLength = 0;
-                                    _wasComposing = false;
-                                  }
-                                });
-                                _saveAutoSendPreference(value);
+                                _controller.setShadowModeEnabled(value);
                               },
                             ),
                           ],
@@ -753,12 +336,6 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     );
   }
 
-  void _closeMenu() {
-    _menuAnimationController.reverse().then((_) {
-      setState(() => _showMenu = false);
-    });
-  }
-
   Widget _buildMenuItem({
     required IconData icon,
     required String text,
@@ -772,12 +349,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
           children: [
             Icon(icon, color: Colors.white, size: 18),
             const SizedBox(width: AppSpacing.sm),
-            Text(
-              text,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ),
           ],
@@ -800,16 +379,17 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
           children: [
             Icon(icon, color: Colors.white, size: 18),
             const SizedBox(width: AppSpacing.sm),
-            Text(
-              text,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ),
-            const Spacer(),
-            // 滑动开关
+            const SizedBox(width: AppSpacing.lg),
             AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               width: 42,
@@ -822,7 +402,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
                 padding: const EdgeInsets.all(2),
                 child: AnimatedAlign(
                   duration: const Duration(milliseconds: 250),
-                  alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+                  alignment: value
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
                   child: Container(
                     width: 20,
                     height: 20,
@@ -874,7 +456,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
       ),
       padding: const EdgeInsets.all(AppSpacing.componentPadding),
       child: TextField(
-        controller: _textController,
+        controller: _controller.textController,
         maxLines: null,
         expands: true,
         decoration: const InputDecoration(
@@ -893,7 +475,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
         ),
         cursorColor: AppColors.primary,
         textInputAction: TextInputAction.send,
-        onSubmitted: (_) => _sendText(),
+        onSubmitted: (_) => _controller.sendText(),
       ),
     );
   }
@@ -902,10 +484,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver, Ticker
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          height: 1,
-          color: AppColors.divider,
-        ),
+        Container(height: 1, color: AppColors.divider),
         const SizedBox(height: AppSpacing.sm),
         const Center(
           child: Text(

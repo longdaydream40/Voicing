@@ -7,6 +7,7 @@ Android 原生应用，用于将手机输入的文字发送到电脑。
 - WebSocket 实时通信
 - 自动连接电脑
 - 息屏/亮屏后的自动重连恢复
+- 协议契约测试覆盖
 - 连接状态显示
 - 文字输入和发送
 - 深色主题 UI
@@ -22,7 +23,7 @@ Android 原生应用，用于将手机输入的文字发送到电脑。
 ### 方式二：自行编译
 
 ```bash
-cd voice_coding
+cd android/voice_coding
 flutter pub get
 flutter build apk --release
 ```
@@ -30,14 +31,14 @@ flutter build apk --release
 ## 使用说明
 
 1. 确保手机和电脑在同一局域网或同一 Windows 移动热点
-2. 电脑运行 Voicing 程序（`Voicing.exe`）
+2. 电脑运行 Voicing 程序（`voicing.exe`）
 3. 打开手机应用，自动发现并连接电脑
 4. 手机息屏后再次亮屏时，应用会主动重建连接
 5. 输入文字后点击“发送到电脑”
 
 ## 技术栈
 
-- Flutter 3.27.0
-- Dart 3.6.0
+- Flutter stable（CI 当前锁定 3.27.0）
+- Dart SDK 约束：`^3.5.4`
 - WebSocket
 - Material Design 3

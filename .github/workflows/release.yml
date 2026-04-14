@@ -28,8 +28,13 @@ jobs:
         id: changelog
         run: |
           # 从 CHANGELOG.md 提取当前版本的更新日志
-          VERSION="$VERSION"
-          awk "/## \\[$VERSION\\]/{flag=1} flag{print} /^---$/{if(flag)exit}" CHANGELOG.md > release_notes.md
+          CHANGELOG_VERSION="${VERSION#v}"
+          awk "/## \\[$CHANGELOG_VERSION\\]/{flag=1} flag{print} /^---$/{if(flag)exit}" CHANGELOG.md > release_notes.md
+
+          if ! grep -q "^## \\[$CHANGELOG_VERSION\\]" release_notes.md; then
+            echo "CHANGELOG.md 中缺少版本 $CHANGELOG_VERSION 的条目"
+            exit 1
+          fi
 
           # 添加下载说明
           cat >> release_notes.md << 'EOF'
