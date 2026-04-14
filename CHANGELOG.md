@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.1] - 2026-04-14
+
+### 修复
+
+- **Android: 菜单圆角区域水波纹溢出**
+  - 问题：点击"自动 Enter"切换状态时，菜单圆角区域闪现白色直角效果
+  - 原因：InkWell 水波纹效果未被裁剪到圆角边界内
+  - 修复：使用 ClipRRect 裁剪第一个和最后一个菜单项，防止水波纹溢出
+
+---
+
 ## [2.6.0] - 2026-04-14
 
 ### 新增
