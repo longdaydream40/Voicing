@@ -6,6 +6,8 @@ from voicing_protocol import (
     CLIENT_TO_SERVER_TYPES,
     DEFAULT_SERVER_IP,
     SERVER_TO_CLIENT_TYPES,
+    TEXT_SEND_MODE_SHADOW,
+    TEXT_SEND_MODE_SUBMIT,
     UDP_BROADCAST_PORT,
     UDP_DISCOVERY_TYPE,
     WEBSOCKET_PORT,
@@ -46,6 +48,11 @@ class ProtocolContractTests(unittest.TestCase):
 
         self.assertEqual(set(text_message.keys()), set(client_messages["text"]))
         self.assertEqual(set(ping_message.keys()), set(client_messages["ping"]))
+        self.assertEqual(text_message["send_mode"], TEXT_SEND_MODE_SUBMIT)
+        self.assertEqual(
+            build_text_message("shadow", send_mode=TEXT_SEND_MODE_SHADOW)["send_mode"],
+            TEXT_SEND_MODE_SHADOW,
+        )
 
     def test_server_message_builders_match_contract(self):
         server_messages = self.contract["messages"]["server_to_client"]
@@ -62,6 +69,9 @@ class ProtocolContractTests(unittest.TestCase):
         for message_type, sample in samples.items():
             with self.subTest(message_type=message_type):
                 self.assertEqual(set(sample.keys()), set(server_messages[message_type]))
+
+        self.assertTrue(build_ack_message()["clear_input"])
+        self.assertFalse(build_ack_message(clear_input=False)["clear_input"])
 
 
 if __name__ == "__main__":

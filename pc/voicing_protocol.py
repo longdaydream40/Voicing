@@ -11,6 +11,9 @@ TYPE_ACK = "ack"
 TYPE_PONG = "pong"
 TYPE_SYNC_STATE = "sync_state"
 TYPE_SYNC_DISABLED = "sync_disabled"
+TEXT_SEND_MODE_SUBMIT = "submit"
+TEXT_SEND_MODE_SHADOW = "shadow"
+TEXT_SEND_MODE_COMMIT = "commit"
 
 CLIENT_TO_SERVER_TYPES = {
     TYPE_TEXT,
@@ -35,10 +38,11 @@ def build_connected_message(sync_enabled: bool, computer_name: str) -> dict:
     }
 
 
-def build_ack_message() -> dict:
+def build_ack_message(clear_input: bool = True) -> dict:
     return {
         "type": TYPE_ACK,
         "message": "Text received and typed",
+        "clear_input": clear_input,
     }
 
 
@@ -64,11 +68,16 @@ def build_sync_disabled_message() -> dict:
     }
 
 
-def build_text_message(content: str, auto_enter: bool = False) -> dict:
+def build_text_message(
+    content: str,
+    auto_enter: bool = False,
+    send_mode: str = TEXT_SEND_MODE_SUBMIT,
+) -> dict:
     return {
         "type": TYPE_TEXT,
         "content": content,
         "auto_enter": auto_enter,
+        "send_mode": send_mode,
     }
 
 

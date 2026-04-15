@@ -139,15 +139,15 @@ class _MainPageState extends State<MainPage>
 
   Widget _buildHeader() {
     final bool showSyncWarning =
-        _controller.status == ConnectionStatus.connected &&
+        _controller.displayStatus == ConnectionStatus.connected &&
             !_controller.syncEnabled;
 
     late final Color connectionDotColor;
     late final String connectionText;
-    if (_controller.status == ConnectionStatus.connecting) {
+    if (_controller.displayStatus == ConnectionStatus.connecting) {
       connectionDotColor = AppColors.warning;
       connectionText = '连接中...';
-    } else if (_controller.status == ConnectionStatus.connected) {
+    } else if (_controller.displayStatus == ConnectionStatus.connected) {
       connectionDotColor =
           showSyncWarning ? AppColors.warning : AppColors.success;
       connectionText = showSyncWarning ? '同步关闭' : '已连接';

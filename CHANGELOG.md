@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.2] - 2026-04-15
+
+### 修复
+
+- **Android: 息屏唤醒后的前台恢复体验**
+  - 亮屏时会重建 UDP 发现监听，并立即进入前台恢复窗口
+  - 恢复窗口内使用 500ms 快速重试，不再回退到常规 3/6/12 秒指数退避
+  - 如果亮屏前已经连上，恢复期间状态栏保持显示"已连接"，避免闪成"未连接"
+
+- **自动 Enter 与自动发送链路解耦**
+  - `TYPE_TEXT` 新增 `send_mode`，区分 `submit`、`shadow`、`commit`
+  - Shadow 增量输入不再直接触发 Enter，改为静默窗口后统一 finalize
+  - 解决部分输入法一次语音分多段 commit 时，多次 Enter 被某些聊天框解释为换行的问题
+
+- **协议 ACK 改为显式控制清空输入框**
+  - `ack` 消息新增 `clear_input`
+  - 仅手动 `submit` 会由服务端确认后清空输入框
+  - Shadow / commit 不再依赖 ACK 到达时序来清空输入框，降低自动发送链路脆弱性
+
+- **PC: 自动 Enter 注入更稳定**
+  - 粘贴后增加 settle delay，再通过 Win32 `SendInput` 发送 Enter
+  - 新增 commit 模式，支持只提交 Enter 而不重复输入文本
+
+### 测试
+
+- Android：
+  - `flutter test`
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+- PC：
+  - `python -m unittest discover -s tests`
+  - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py`
+
+---
+
 ## [2.6.1] - 2026-04-14
 
 ### 修复

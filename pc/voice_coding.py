@@ -43,6 +43,8 @@ from voicing_protocol import (
     TYPE_PING,
     TYPE_TEXT,
     WEBSOCKET_PORT,
+    TEXT_SEND_MODE_COMMIT,
+    TEXT_SEND_MODE_SUBMIT,
     UDP_BROADCAST_PORT,
     build_ack_message,
     build_connected_message,
@@ -92,14 +94,81 @@ def show_already_running_message():
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.6.2"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
 STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTO_ENTER_SETTLE_DELAY_SEC = 0.15
 
 # Disable pyautogui failsafe (moving to corner won't stop it)
 pyautogui.FAILSAFE = False
 # Small pause between keystrokes for stability
 pyautogui.PAUSE = 0.01
+
+INPUT_KEYBOARD = 1
+KEYEVENTF_KEYUP = 0x0002
+VK_RETURN = 0x0D
+ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [
+        ("ki", KEYBDINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("data",)
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("data", _INPUTUNION),
+    ]
+
+
+def _send_keyboard_input(*inputs: "INPUT"):
+    sent = ctypes.windll.user32.SendInput(
+        len(inputs),
+        (INPUT * len(inputs))(*inputs),
+        ctypes.sizeof(INPUT),
+    )
+    if sent != len(inputs):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _build_keyboard_input(vk_code: int, flags: int = 0) -> "INPUT":
+    return INPUT(
+        type=INPUT_KEYBOARD,
+        ki=KEYBDINPUT(
+            wVk=vk_code,
+            wScan=0,
+            dwFlags=flags,
+            time=0,
+            dwExtraInfo=0,
+        ),
+    )
+
+
+def press_enter_key():
+    """
+    Press Enter using Win32 SendInput.
+    使用 Win32 SendInput 发送 Enter，避免部分应用把 pyautogui 的旧式事件处理得不稳定。
+    """
+    try:
+        _send_keyboard_input(
+            _build_keyboard_input(VK_RETURN),
+            _build_keyboard_input(VK_RETURN, KEYEVENTF_KEYUP),
+        )
+    except Exception:
+        pyautogui.press('enter')
 
 
 # ============================================================
@@ -344,13 +413,15 @@ def type_text(text: str, auto_enter: bool = False):
 
         # Copy new text and paste
         pyperclip.copy(text)
-        pyautogui.hotkey('ctrl', 'v')
+        pyautogui.hotkey('ctrl', 'v', interval=0.02)
 
         # Auto press Enter if enabled
         if auto_enter:
             import time
-            time.sleep(0.05)  # Small delay before Enter
-            pyautogui.press('enter')
+            # Give the target app time to process Ctrl+V before sending Enter.
+            # Some chat inputs mis-handle an immediate Enter as Ctrl+Enter/newline.
+            time.sleep(AUTO_ENTER_SETTLE_DELAY_SEC)
+            press_enter_key()
 
         # Small delay then restore clipboard
         import time
@@ -401,12 +472,21 @@ async def handle_client(websocket):
                         continue
 
                     text = data.get("content", "")
-                    auto_enter = data.get("auto_enter", False)
-                    if text:
+                    send_mode = data.get("send_mode", TEXT_SEND_MODE_SUBMIT)
+                    auto_enter = data.get("auto_enter", False) and send_mode == TEXT_SEND_MODE_SUBMIT
+                    if send_mode == TEXT_SEND_MODE_COMMIT:
+                        if data.get("auto_enter", False):
+                            await asyncio.to_thread(press_enter_key)
+                        await websocket.send(json.dumps(build_ack_message(
+                            clear_input=False,
+                        )))
+                    elif text:
                         # Type the received text (run in thread to avoid blocking event loop)
                         await asyncio.to_thread(type_text, text, auto_enter)
                         # Send acknowledgment
-                        await websocket.send(json.dumps(build_ack_message()))
+                        await websocket.send(json.dumps(build_ack_message(
+                            clear_input=send_mode == TEXT_SEND_MODE_SUBMIT,
+                        )))
 
                 elif msg_type == TYPE_PING:
                     # Respond with pong and current sync state

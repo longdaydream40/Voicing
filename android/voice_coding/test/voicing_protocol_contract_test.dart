@@ -40,6 +40,17 @@ void main() {
       equals((clientMessages['text'] as List<dynamic>).cast<String>().toSet()),
     );
     expect(
+      VoicingProtocol.buildTextMessage('hello')['send_mode'],
+      VoicingProtocol.textSendModeSubmit,
+    );
+    expect(
+      VoicingProtocol.buildTextMessage(
+        'hello',
+        sendMode: VoicingProtocol.textSendModeShadow,
+      )['send_mode'],
+      VoicingProtocol.textSendModeShadow,
+    );
+    expect(
       VoicingProtocol.buildPingMessage().keys.toSet(),
       equals((clientMessages['ping'] as List<dynamic>).cast<String>().toSet()),
     );

@@ -19,6 +19,9 @@ class VoicingProtocol {
   static const String typePong = 'pong';
   static const String typeSyncState = 'sync_state';
   static const String typeSyncDisabled = 'sync_disabled';
+  static const String textSendModeSubmit = 'submit';
+  static const String textSendModeShadow = 'shadow';
+  static const String textSendModeCommit = 'commit';
 
   static const Set<String> clientMessageTypes = {
     typeText,
@@ -33,11 +36,16 @@ class VoicingProtocol {
     typeSyncDisabled,
   };
 
-  static Map<String, dynamic> buildTextMessage(String content, {bool autoEnter = false}) {
+  static Map<String, dynamic> buildTextMessage(
+    String content, {
+    bool autoEnter = false,
+    String sendMode = textSendModeSubmit,
+  }) {
     return {
       'type': typeText,
       'content': content,
       'auto_enter': autoEnter,
+      'send_mode': sendMode,
     };
   }
 

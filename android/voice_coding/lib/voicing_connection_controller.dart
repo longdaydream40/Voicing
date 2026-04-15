@@ -12,6 +12,8 @@ import 'connection_recovery_policy.dart';
 import 'voicing_protocol.dart';
 
 class VoicingConnectionController extends ChangeNotifier {
+  static const Duration _shadowFinalizeDelay = Duration(milliseconds: 700);
+
   VoicingConnectionController({
     ConnectionRecoveryPolicy recoveryPolicy = const ConnectionRecoveryPolicy(
       heartbeatTimeout: Duration(
@@ -19,6 +21,12 @@ class VoicingConnectionController extends ChangeNotifier {
       ),
       udpReconnectCooldown: Duration(
         milliseconds: VoicingProtocol.udpReconnectCooldownMs,
+      ),
+      normalConnectTimeout: Duration(
+        seconds: VoicingProtocol.connectTimeoutSec,
+      ),
+      maxReconnectDelay: Duration(
+        seconds: VoicingProtocol.maxReconnectDelaySec,
       ),
     ),
   }) : _recoveryPolicy = recoveryPolicy {
@@ -46,8 +54,15 @@ class VoicingConnectionController extends ChangeNotifier {
   int _reconnectAttempt = 0;
   int _connectionGeneration = 0;
   DateTime? _lastConnectStartedAt;
+  DateTime? _foregroundRecoveryUntil;
+  Timer? _foregroundRecoveryTimer;
+  Timer? _shadowFinalizeTimer;
+  bool _displayConnectedDuringForegroundRecovery = false;
 
   ConnectionStatus get status => _status;
+  ConnectionStatus get displayStatus => _displayConnectedDuringForegroundRecovery
+      ? ConnectionStatus.connected
+      : _status;
   bool get syncEnabled => _syncEnabled;
   bool get autoEnterEnabled => _autoEnterEnabled;
   String get serverIp => _serverIp;
@@ -56,7 +71,7 @@ class VoicingConnectionController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _loadAutoEnterPreference();
-    await _startUdpDiscovery();
+    await _restartUdpDiscovery(reason: 'init');
     _forceReconnect(resetBackoff: true, reason: 'init');
   }
 
@@ -65,6 +80,8 @@ class VoicingConnectionController extends ChangeNotifier {
       _stopHeartbeat();
     } else if (state == AppLifecycleState.resumed &&
         _recoveryPolicy.shouldForceReconnectOnResume()) {
+      _beginForegroundRecovery();
+      await _restartUdpDiscovery(reason: 'app resumed');
       _forceReconnect(resetBackoff: true, reason: 'app resumed');
     }
   }
@@ -90,8 +107,22 @@ class VoicingConnectionController extends ChangeNotifier {
       return;
     }
 
+    if (_hasPendingShadowBuffer(text)) {
+      _finalizeShadowInput(forceEnter: _autoEnterEnabled);
+      return;
+    }
+
+    _shadowFinalizeTimer?.cancel();
     try {
-      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(text, autoEnter: _autoEnterEnabled)));
+      _channel?.sink.add(
+        json.encode(
+          VoicingProtocol.buildTextMessage(
+            text,
+            autoEnter: _autoEnterEnabled,
+            sendMode: VoicingProtocol.textSendModeSubmit,
+          ),
+        ),
+      );
       _lastSentText = text;
       _lastSentLength = 0;
     } catch (error, stackTrace) {
@@ -104,12 +135,16 @@ class VoicingConnectionController extends ChangeNotifier {
   void dispose() {
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _foregroundRecoveryTimer?.cancel();
+    _shadowFinalizeTimer?.cancel();
     textController.removeListener(_onTextControllerChanged);
     _connectionGeneration++;
     _channel?.sink.close();
     textController.dispose();
     _udpSubscription?.cancel();
+    _udpSubscription = null;
     _udpSocket?.close();
+    _udpSocket = null;
     super.dispose();
   }
 
@@ -130,6 +165,7 @@ class VoicingConnectionController extends ChangeNotifier {
 
   void _connect() {
     final int connectionId = ++_connectionGeneration;
+    final bool foregroundRecoveryActive = _isForegroundRecoveryActive();
     _lastConnectStartedAt = DateTime.now();
     _setStatus(ConnectionStatus.connecting);
 
@@ -141,8 +177,8 @@ class VoicingConnectionController extends ChangeNotifier {
     try {
       _channel = IOWebSocketChannel.connect(
         Uri.parse('ws://$_serverIp:$_serverPort'),
-        connectTimeout: const Duration(
-          seconds: VoicingProtocol.connectTimeoutSec,
+        connectTimeout: _recoveryPolicy.resolveConnectTimeout(
+          foregroundRecoveryActive: foregroundRecoveryActive,
         ),
       );
 
@@ -188,6 +224,7 @@ class VoicingConnectionController extends ChangeNotifier {
 
       final type = data['type'];
       if (type == VoicingProtocol.typeConnected) {
+        _endForegroundRecovery();
         _status = ConnectionStatus.connected;
         _syncEnabled = data['sync_enabled'] ?? true;
         _reconnectAttempt = 0;
@@ -195,7 +232,10 @@ class VoicingConnectionController extends ChangeNotifier {
         _startHeartbeat();
         notifyListeners();
       } else if (type == VoicingProtocol.typeAck) {
-        textController.clear();
+        final shouldClearInput = data['clear_input'];
+        if (shouldClearInput is bool ? shouldClearInput : true) {
+          textController.clear();
+        }
       } else if (type == VoicingProtocol.typeSyncDisabled) {
         _lastPong = DateTime.now();
         _syncEnabled = data['sync_enabled'] ?? false;
@@ -220,27 +260,28 @@ class VoicingConnectionController extends ChangeNotifier {
       return;
     }
 
+    final now = DateTime.now();
+    final bool foregroundRecoveryActive = _isForegroundRecoveryActive(now: now);
     _stopHeartbeat();
-    if (_status == ConnectionStatus.disconnected) {
-      return;
-    }
-
-    _status = ConnectionStatus.disconnected;
+    _status = foregroundRecoveryActive
+        ? ConnectionStatus.connecting
+        : ConnectionStatus.disconnected;
     _syncEnabled = true;
     notifyListeners();
 
-    final delaySec = (_reconnectAttempt < 5)
-        ? 3 * (1 << _reconnectAttempt)
-        : VoicingProtocol.maxReconnectDelaySec;
-    _reconnectAttempt++;
+    final reconnectDelay = _recoveryPolicy.reconnectDelay(
+      reconnectAttempt: _reconnectAttempt,
+      foregroundRecoveryActive: foregroundRecoveryActive,
+    );
+    _reconnectAttempt = foregroundRecoveryActive ? 0 : _reconnectAttempt + 1;
 
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(
-      Duration(
-        seconds: delaySec.clamp(3, VoicingProtocol.maxReconnectDelaySec),
-      ),
+      reconnectDelay,
       () {
         if (_status == ConnectionStatus.disconnected) {
+          _connect();
+        } else if (_status == ConnectionStatus.connecting) {
           _connect();
         }
       },
@@ -322,6 +363,21 @@ class VoicingConnectionController extends ChangeNotifier {
     }
   }
 
+  Future<void> _restartUdpDiscovery({String reason = ''}) async {
+    await _stopUdpDiscovery();
+    await _startUdpDiscovery();
+    if (reason.isNotEmpty) {
+      AppLogger.info('UDP 发现监听已重建: $reason');
+    }
+  }
+
+  Future<void> _stopUdpDiscovery() async {
+    await _udpSubscription?.cancel();
+    _udpSubscription = null;
+    _udpSocket?.close();
+    _udpSocket = null;
+  }
+
   void _handleUdpDiscovery(String message, String sourceIp) {
     try {
       final announcement = VoicingProtocol.parseUdpDiscoveryMessage(message);
@@ -329,13 +385,16 @@ class VoicingConnectionController extends ChangeNotifier {
         return;
       }
 
+      final now = DateTime.now();
+      final bool foregroundRecoveryActive = _isForegroundRecoveryActive(now: now);
       final bool serverChanged = _serverIp != announcement.ip ||
           _serverPort != announcement.port;
       final bool shouldReconnectFromBroadcast = _recoveryPolicy.shouldReconnectFromUdp(
         serverChanged: serverChanged,
+        foregroundRecoveryActive: foregroundRecoveryActive,
         status: _status,
         lastConnectStartedAt: _lastConnectStartedAt,
-        now: DateTime.now(),
+        now: now,
       );
 
       if (serverChanged) {
@@ -361,6 +420,43 @@ class VoicingConnectionController extends ChangeNotifier {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  void _beginForegroundRecovery() {
+    final now = DateTime.now();
+    _foregroundRecoveryUntil = _recoveryPolicy.startForegroundRecovery(now);
+    _displayConnectedDuringForegroundRecovery =
+        _status == ConnectionStatus.connected;
+    _foregroundRecoveryTimer?.cancel();
+    _foregroundRecoveryTimer = Timer(
+      _foregroundRecoveryUntil!.difference(now),
+      () {
+        if (_displayConnectedDuringForegroundRecovery) {
+          _displayConnectedDuringForegroundRecovery = false;
+          notifyListeners();
+        }
+      },
+    );
+    notifyListeners();
+  }
+
+  void _endForegroundRecovery() {
+    _foregroundRecoveryUntil = null;
+    _foregroundRecoveryTimer?.cancel();
+    _foregroundRecoveryTimer = null;
+    _displayConnectedDuringForegroundRecovery = false;
+  }
+
+  bool _isForegroundRecoveryActive({DateTime? now}) {
+    final currentTime = now ?? DateTime.now();
+    final active = _recoveryPolicy.isForegroundRecoveryActive(
+      recoveryUntil: _foregroundRecoveryUntil,
+      now: currentTime,
+    );
+    if (!active) {
+      _foregroundRecoveryUntil = null;
+    }
+    return active;
   }
 
   void _onTextControllerChanged() {
@@ -392,12 +488,67 @@ class VoicingConnectionController extends ChangeNotifier {
 
     final increment = currentText.substring(_lastSentLength);
     try {
-      _channel?.sink.add(json.encode(VoicingProtocol.buildTextMessage(increment, autoEnter: _autoEnterEnabled)));
+      _channel?.sink.add(
+        json.encode(
+          VoicingProtocol.buildTextMessage(
+            increment,
+            autoEnter: false,
+            sendMode: VoicingProtocol.textSendModeShadow,
+          ),
+        ),
+      );
       _lastSentLength = currentText.length;
       _lastSentText = currentText;
+      _scheduleShadowFinalize();
     } catch (error, stackTrace) {
       AppLogger.warning('自动发送失败', error: error, stackTrace: stackTrace);
     }
+  }
+
+  bool _hasPendingShadowBuffer(String text) {
+    return _lastSentLength > 0 &&
+        _lastSentLength == text.length &&
+        _lastSentText == text;
+  }
+
+  void _scheduleShadowFinalize() {
+    _shadowFinalizeTimer?.cancel();
+    _shadowFinalizeTimer = Timer(
+      _shadowFinalizeDelay,
+      () => _finalizeShadowInput(forceEnter: _autoEnterEnabled),
+    );
+  }
+
+  void _finalizeShadowInput({required bool forceEnter}) {
+    _shadowFinalizeTimer?.cancel();
+    _shadowFinalizeTimer = null;
+
+    final currentText = textController.text.trim();
+    if (!_hasPendingShadowBuffer(currentText)) {
+      return;
+    }
+
+    if (forceEnter &&
+        _status == ConnectionStatus.connected &&
+        _syncEnabled) {
+      try {
+        _channel?.sink.add(
+          json.encode(
+            VoicingProtocol.buildTextMessage(
+              '',
+              autoEnter: true,
+              sendMode: VoicingProtocol.textSendModeCommit,
+            ),
+          ),
+        );
+      } catch (error, stackTrace) {
+        AppLogger.warning('自动 Enter 提交失败', error: error, stackTrace: stackTrace);
+      }
+    }
+
+    _lastSentLength = 0;
+    _wasComposing = false;
+    textController.clear();
   }
 
   Future<void> _loadAutoEnterPreference() async {

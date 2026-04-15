@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/kevinlasnh/Voicing)](https://github.com/kevinlasnh/Voicing/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-blueviolet)](#)
-[![Version](https://img.shields.io/badge/version-2.6.1-green)](#)
+[![Version](https://img.shields.io/badge/version-2.6.2-green)](#)
 
 和 AI 对话时打字太慢？Voicing 让你用嘴代替手
 
@@ -139,8 +139,8 @@ Voicing/
 正式发布通过 GitHub Actions 自动构建：
 
 ```bash
-git tag v2.6.1
-git push origin v2.6.1
+git tag v2.6.2
+git push origin v2.6.2
 ```
 
 本地调试用：
@@ -159,7 +159,7 @@ cd android/voice_coding && flutter build apk --release
 **手机无法连接电脑？**
 1. 确认电脑和手机在同一个 WiFi 热点下
 2. 检查电脑防火墙是否放行 UDP 9530 端口
-3. 手机息屏恢复后等几秒，App 会自动重连
+3. 手机息屏恢复后会立即进入快速重连，通常无需手动刷新
 4. 仍然不行就点手机端"刷新连接"
 
 **文字打到了错误位置？**

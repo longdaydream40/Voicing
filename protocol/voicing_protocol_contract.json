@@ -16,7 +16,9 @@
     "client_to_server": {
       "text": [
         "type",
-        "content"
+        "content",
+        "auto_enter",
+        "send_mode"
       ],
       "ping": [
         "type"
@@ -31,7 +33,8 @@
       ],
       "ack": [
         "type",
-        "message"
+        "message",
+        "clear_input"
       ],
       "pong": [
         "type",
