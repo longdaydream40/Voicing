@@ -7,45 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.8.0] - 2026-04-16
-
-### 新增
-
-- **Windows / Linux 蓝牙经典 RFCOMM 传输**
-  - Windows 桌面端改为原生 Bluetooth RFCOMM socket + SDP 服务注册
-  - Linux 桌面端改为 BlueZ `ProfileManager1` 注册 RFCOMM Profile
-  - Windows / Linux 不再依赖 WiFi 热点建立主连接链路
-
-- **Android 原生蓝牙桥接**
-  - Android 端新增原生 Kotlin 蓝牙桥接，通过 `MethodChannel` / `EventChannel` 接入 Flutter
-  - 连接方式支持 `蓝牙 / WiFi` 切换
-  - 蓝牙模式使用系统已配对设备列表，不依赖经典蓝牙 Flutter 插件
-
-### 改进
-
-- **部署风险清理**
-  - 移除 `pybluez2` 方案，避免 Python 3.12 安装不稳和 GPL 许可证风险
-  - 保留 macOS 局域网模式，继续使用现有 UDP + WebSocket 链路
-  - macOS 局域网 IP 检测优先匹配常见家庭路由器网段
-
-- **测试覆盖扩展**
-  - 新增桌面端蓝牙服务器单测
-  - 新增 Android 蓝牙连接控制器单测
-  - Python 单测累计 `28/28` 通过
-  - Flutter 单测累计 `17/17` 通过
-
-### 测试
-
-- Android：
-  - `flutter test`
-  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
-- PC：
-  - `python -m unittest discover -s pc/tests`
-  - `python -m unittest discover -s tests`
-  - `python -m py_compile pc/voice_coding.py pc/bluetooth_server.py pc/platform_utils.py pc/platform_keyboard.py pc/platform_autostart.py pc/platform_instance.py pc/network_recovery.py pc/voicing_protocol.py`
-
----
-
 ## [2.7.0] - 2026-04-16
 
 ### 新增

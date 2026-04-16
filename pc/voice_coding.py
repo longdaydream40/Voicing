@@ -34,15 +34,6 @@ from websockets.server import serve
 from PIL import Image, ImageDraw
 import pyperclip
 
-from bluetooth_server import (
-    BluetoothClientAdapter,
-    BLUETOOTH_MESSAGE_DELIMITER,
-    BLUETOOTH_RFCOMM_CHANNEL,
-    BLUETOOTH_SERVICE_NAME,
-    BLUETOOTH_SERVICE_UUID,
-    is_bluetooth_desktop_platform,
-    start_bluetooth_server,
-)
 from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
 from platform_autostart import is_startup_enabled, set_startup_enabled
 from platform_instance import check_single_instance, show_already_running_message
@@ -54,7 +45,6 @@ from platform_utils import (
     get_log_dir,
     get_native_font_family,
     get_platform,
-    get_preferred_local_network_prefixes,
     get_preferred_hotspot_prefixes,
     open_file_in_default_app,
     open_file_in_text_editor,
@@ -100,7 +90,6 @@ class AppState:
         self.log_file = None  # 日志文件路径
         self.lock = threading.Lock()  # 保护共享状态
         self.shutdown_event = threading.Event()  # 用于优雅退出
-        self.server_loop: Optional[asyncio.AbstractEventLoop] = None
 
 state = AppState()
 
@@ -152,11 +141,7 @@ def get_hotspot_ip() -> str:
     """
     try:
         all_local_ips = get_all_local_ips()
-        for prefixes in (
-            get_preferred_local_network_prefixes(),
-            get_preferred_hotspot_prefixes(),
-            get_known_hotspot_prefixes(),
-        ):
+        for prefixes in (get_preferred_hotspot_prefixes(), get_known_hotspot_prefixes()):
             for adapter_ip in all_local_ips:
                 if any(adapter_ip.startswith(prefix) for prefix in prefixes):
                     return adapter_ip
@@ -351,64 +336,8 @@ def type_text(text: str, auto_enter: bool = False):
 
 
 # ============================================================
-# Transport-Agnostic Message Processing / 传输无关消息处理
+# Reserved for future features / 保留给未来功能
 # ============================================================
-def build_welcome_message() -> dict:
-    return build_connected_message(
-        sync_enabled=state.sync_enabled,
-        computer_name=socket.gethostname(),
-    )
-
-
-def process_incoming_message(data: dict) -> list[dict]:
-    msg_type = data.get("type", "")
-
-    if msg_type == TYPE_TEXT:
-        if not state.sync_enabled:
-            return [build_sync_disabled_message()]
-
-        text = data.get("content", "")
-        send_mode = data.get("send_mode", TEXT_SEND_MODE_SUBMIT)
-        auto_enter = data.get("auto_enter", False) and send_mode == TEXT_SEND_MODE_SUBMIT
-
-        if send_mode == TEXT_SEND_MODE_COMMIT:
-            if data.get("auto_enter", False):
-                press_enter()
-            return [build_ack_message(clear_input=False)]
-
-        if text:
-            type_text(text, auto_enter)
-            return [build_ack_message(clear_input=send_mode == TEXT_SEND_MODE_SUBMIT)]
-
-        return []
-
-    if msg_type == TYPE_PING:
-        return [build_pong_message(sync_enabled=state.sync_enabled)]
-
-    return []
-
-
-async def send_transport_message(client, message: dict) -> None:
-    payload = json.dumps(message, ensure_ascii=False)
-    if isinstance(client, BluetoothClientAdapter):
-        await asyncio.to_thread(client.send_message, message)
-        return
-
-    await client.send(payload)
-
-
-def send_transport_message_sync(client, message: dict) -> None:
-    if isinstance(client, BluetoothClientAdapter):
-        client.send_message(message)
-        return
-
-    if state.server_loop is None:
-        raise RuntimeError("WebSocket server loop is not available for sync send.")
-    future = asyncio.run_coroutine_threadsafe(
-        client.send(json.dumps(message, ensure_ascii=False)),
-        state.server_loop,
-    )
-    future.result(timeout=5)
 
 
 # ============================================================
@@ -422,14 +351,49 @@ async def handle_client(websocket):
     print(f"Client connected: {client_addr}")
 
     try:
-        await websocket.send(json.dumps(build_welcome_message()))
+        # Get computer name for identification
+        computer_name = socket.gethostname()
+
+        # Send welcome message with current sync state and computer name
+        await websocket.send(json.dumps(build_connected_message(
+            sync_enabled=state.sync_enabled,
+            computer_name=computer_name,
+        )))
 
         async for message in websocket:
             try:
                 data = json.loads(message)
-                responses = await asyncio.to_thread(process_incoming_message, data)
-                for response in responses:
-                    await send_transport_message(websocket, response)
+                msg_type = data.get("type", "")
+
+                if msg_type == TYPE_TEXT:
+                    # Check if sync is enabled
+                    if not state.sync_enabled:
+                        await websocket.send(json.dumps(build_sync_disabled_message()))
+                        continue
+
+                    text = data.get("content", "")
+                    send_mode = data.get("send_mode", TEXT_SEND_MODE_SUBMIT)
+                    auto_enter = data.get("auto_enter", False) and send_mode == TEXT_SEND_MODE_SUBMIT
+                    if send_mode == TEXT_SEND_MODE_COMMIT:
+                        if data.get("auto_enter", False):
+                            await asyncio.to_thread(press_enter)
+                        await websocket.send(json.dumps(build_ack_message(
+                            clear_input=False,
+                        )))
+                    elif text:
+                        # Type the received text (run in thread to avoid blocking event loop)
+                        await asyncio.to_thread(type_text, text, auto_enter)
+                        # Send acknowledgment
+                        await websocket.send(json.dumps(build_ack_message(
+                            clear_input=send_mode == TEXT_SEND_MODE_SUBMIT,
+                        )))
+
+                elif msg_type == TYPE_PING:
+                    # Respond with pong and current sync state
+                    await websocket.send(json.dumps(build_pong_message(
+                        sync_enabled=state.sync_enabled,
+                    )))
+
             except json.JSONDecodeError:
                 # If not JSON, treat as plain text
                 if message.strip() and state.sync_enabled:
@@ -448,11 +412,11 @@ async def broadcast_sync_state():
     if not state.connected_clients:
         return
     
-    message = build_sync_state_message(sync_enabled=state.sync_enabled)
+    message = json.dumps(build_sync_state_message(sync_enabled=state.sync_enabled))
     
     for client in state.connected_clients.copy():  # copy() 避免迭代时修改
         try:
-            await send_transport_message(client, message)
+            await client.send(message)
         except Exception:
             pass
 
@@ -473,7 +437,6 @@ def run_server():
     """Run the server in a separate thread / 在单独线程中运行服务器"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    state.server_loop = loop
     loop.run_until_complete(start_server())
 
 
@@ -758,12 +721,10 @@ class ModernMenuWidget(QWidget):
         self.close_with_animation()
         # 广播同步状态
         def send_sync_state():
-            message = build_sync_state_message(sync_enabled=state.sync_enabled)
-            for client in state.connected_clients.copy():
-                try:
-                    send_transport_message_sync(client, message)
-                except Exception as exc:
-                    logging.debug("同步状态发送失败: %s", exc)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(broadcast_sync_state())
+            loop.close()
         threading.Thread(target=send_sync_state, daemon=True).start()
 
     def toggle_startup(self):
@@ -1007,27 +968,17 @@ def main():
         show_fatal_message("Voicing 无法启动", str(exc))
         return
 
-    if is_bluetooth_desktop_platform():
-        logging.info(
-            "当前平台使用 Bluetooth RFCOMM 传输: service=%s uuid=%s channel=%s",
-            BLUETOOTH_SERVICE_NAME,
-            BLUETOOTH_SERVICE_UUID,
-            BLUETOOTH_RFCOMM_CHANNEL,
-        )
-        bt_thread = threading.Thread(
-            target=run_bluetooth_server,
-            daemon=True,
-        )
-        bt_thread.start()
-    else:
-        HOTSPOT_IP = get_hotspot_ip()
-        logging.info(f"检测到热点 IP: {HOTSPOT_IP}")
+    # Detect hotspot IP at startup
+    HOTSPOT_IP = get_hotspot_ip()
+    logging.info(f"检测到热点 IP: {HOTSPOT_IP}")
 
-        ws_thread = threading.Thread(target=run_server, daemon=True)
-        ws_thread.start()
+    # Start WebSocket server in background thread
+    ws_thread = threading.Thread(target=run_server, daemon=True)
+    ws_thread.start()
 
-        udp_thread = threading.Thread(target=start_udp_broadcast, daemon=True)
-        udp_thread.start()
+    # Start UDP broadcast for auto-discovery
+    udp_thread = threading.Thread(target=start_udp_broadcast, daemon=True)
+    udp_thread.start()
 
     try:
         run_tray()
@@ -1042,15 +993,6 @@ def show_fatal_message(title: str, message: str) -> None:
     QMessageBox.critical(None, title, message)
     if owns_app:
         app.quit()
-
-
-def run_bluetooth_server() -> None:
-    try:
-        start_bluetooth_server(state, process_incoming_message, build_welcome_message)
-    except Exception as exc:
-        logging.error("Bluetooth server startup failed: %s", exc)
-        state.running = False
-        state.shutdown_event.set()
 
 
 if __name__ == "__main__":

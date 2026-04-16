@@ -12,7 +12,7 @@
    - 复现步骤
    - 期望行为
    - 实际行为
-   - 环境信息（操作系统、Python 版本等）
+   - 环境信息（Windows 版本、Python 版本等）
 
 ### 提交功能建议
 
@@ -60,11 +60,10 @@ flutter run
 1. Android 端通过：
    - `flutter test`
    - `flutter analyze --no-fatal-infos --no-fatal-warnings`
-2. 桌面端通过：
+2. PC 端通过：
    - `python -m unittest discover -s tests`
-   - `python -m py_compile voice_coding.py bluetooth_server.py network_recovery.py voicing_protocol.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py`
+   - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py`
 3. 程序能正常启动，手机端能正常连接，文本能正常发送到电脑
-4. 如果改动了蓝牙链路，需要额外确认 Windows / Linux 蓝牙连接与 macOS WiFi 模式均未回归
 
 ## 发布
 

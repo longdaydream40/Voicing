@@ -1,13 +1,9 @@
 import 'dart:math' show pi;
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_theme.dart';
-import 'bluetooth_connection_controller.dart';
-import 'bluetooth_device_picker.dart';
 import 'connection_recovery_policy.dart';
-import 'transport_connection_controller.dart';
 import 'voicing_connection_controller.dart';
 
 void main() {
@@ -37,15 +33,12 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  static const String _transportModePreferenceKey = 'transport_mode';
   final GlobalKey _menuButtonKey = GlobalKey();
 
-  late final TextEditingController _sharedTextController;
+  late final VoicingConnectionController _controller;
   late final AnimationController _menuAnimationController;
   late final Animation<double> _menuSlideAnimation;
   late final Animation<double> _menuFadeAnimation;
-  TransportConnectionController? _controller;
-  TransportMode _transportMode = TransportMode.wifi;
 
   bool _showMenu = false;
 
@@ -54,7 +47,8 @@ class _MainPageState extends State<MainPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _sharedTextController = TextEditingController();
+    _controller = VoicingConnectionController();
+    _controller.addListener(_handleControllerUpdate);
 
     _menuAnimationController = AnimationController(
       duration: const Duration(milliseconds: 250),
@@ -69,66 +63,27 @@ class _MainPageState extends State<MainPage>
       curve: Curves.easeOut,
     );
 
-    _restoreTransportPreference();
+    _controller.initialize();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _controller?.removeListener(_handleControllerUpdate);
-    _controller?.dispose();
-    _sharedTextController.dispose();
+    _controller.removeListener(_handleControllerUpdate);
+    _controller.dispose();
     _menuAnimationController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _controller?.handleLifecycleState(state);
+    _controller.handleLifecycleState(state);
   }
 
   void _handleControllerUpdate() {
     if (mounted) {
       setState(() {});
     }
-  }
-
-  Future<void> _restoreTransportPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedValue = prefs.getString(_transportModePreferenceKey);
-    final initialMode = savedValue == TransportMode.bluetooth.name
-        ? TransportMode.bluetooth
-        : TransportMode.wifi;
-    await _activateTransport(initialMode, savePreference: false);
-  }
-
-  Future<void> _activateTransport(
-    TransportMode mode, {
-    bool savePreference = true,
-  }) async {
-    _controller?.removeListener(_handleControllerUpdate);
-    _controller?.dispose();
-
-    final TransportConnectionController controller = switch (mode) {
-      TransportMode.wifi => VoicingConnectionController(
-          textController: _sharedTextController,
-        ),
-      TransportMode.bluetooth => BluetoothConnectionController(
-          textController: _sharedTextController,
-        ),
-    };
-    controller.addListener(_handleControllerUpdate);
-    setState(() {
-      _transportMode = mode;
-      _controller = controller;
-    });
-
-    if (savePreference) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_transportModePreferenceKey, mode.name);
-    }
-
-    await controller.initialize();
   }
 
   void _toggleMenu() {
@@ -150,55 +105,15 @@ class _MainPageState extends State<MainPage>
   }
 
   void _refreshConnection() {
-    _controller?.refreshConnection();
+    _controller.refreshConnection();
   }
 
   void _recallLastText() {
-    _controller?.recallLastText();
-  }
-
-  BluetoothConnectionController? get _bluetoothController =>
-      _controller is BluetoothConnectionController
-          ? _controller as BluetoothConnectionController
-          : null;
-
-  Future<void> _showBluetoothDevicePicker() async {
-    final controller = _bluetoothController;
-    if (controller == null) {
-      return;
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppColors.background,
-      builder: (context) {
-        return BluetoothDevicePicker(
-          devices: controller.bondedDevices,
-          selectedAddress: controller.targetAddress,
-          onRefresh: () {
-            controller.reloadBondedDevices();
-          },
-          onOpenSystemSettings: () {
-            controller.openSystemBluetoothSettings();
-          },
-          onSelectDevice: (device) {
-            Navigator.of(context).pop();
-            controller.selectTargetDevice(device);
-          },
-        );
-      },
-    );
+    _controller.recallLastText();
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = _controller;
-    if (controller == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
     return Scaffold(
       body: Stack(
         children: [
@@ -207,11 +122,9 @@ class _MainPageState extends State<MainPage>
               padding: const EdgeInsets.all(AppSpacing.md),
               child: Column(
                 children: [
-                  _buildHeader(controller),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildTransportSelector(),
+                  _buildHeader(),
                   const SizedBox(height: AppSpacing.componentGap),
-                  Expanded(child: _buildInputArea(controller)),
+                  Expanded(child: _buildInputArea()),
                   const SizedBox(height: AppSpacing.md),
                   _buildEnterHint(),
                 ],
@@ -224,17 +137,17 @@ class _MainPageState extends State<MainPage>
     );
   }
 
-  Widget _buildHeader(TransportConnectionController controller) {
+  Widget _buildHeader() {
     final bool showSyncWarning =
-        controller.displayStatus == ConnectionStatus.connected &&
-            !controller.syncEnabled;
+        _controller.displayStatus == ConnectionStatus.connected &&
+            !_controller.syncEnabled;
 
     late final Color connectionDotColor;
     late final String connectionText;
-    if (controller.displayStatus == ConnectionStatus.connecting) {
+    if (_controller.displayStatus == ConnectionStatus.connecting) {
       connectionDotColor = AppColors.warning;
       connectionText = '连接中...';
-    } else if (controller.displayStatus == ConnectionStatus.connected) {
+    } else if (_controller.displayStatus == ConnectionStatus.connected) {
       connectionDotColor =
           showSyncWarning ? AppColors.warning : AppColors.success;
       connectionText = showSyncWarning ? '同步关闭' : '已连接';
@@ -263,25 +176,6 @@ class _MainPageState extends State<MainPage>
                     color: connectionDotColor,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.inputFill,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    controller.transportMode == TransportMode.bluetooth
-                        ? '蓝牙'
-                        : 'WiFi',
-                    style: AppTextStyles.hint.copyWith(
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -289,31 +183,6 @@ class _MainPageState extends State<MainPage>
         const SizedBox(width: AppSpacing.componentGap),
         Expanded(child: _buildMenuButton()),
       ],
-    );
-  }
-
-  Widget _buildTransportSelector() {
-    return SegmentedButton<TransportMode>(
-      segments: const [
-        ButtonSegment<TransportMode>(
-          value: TransportMode.wifi,
-          icon: Icon(Icons.wifi),
-          label: Text('WiFi'),
-        ),
-        ButtonSegment<TransportMode>(
-          value: TransportMode.bluetooth,
-          icon: Icon(Icons.bluetooth),
-          label: Text('蓝牙'),
-        ),
-      ],
-      selected: <TransportMode>{_transportMode},
-      onSelectionChanged: (selection) {
-        final selected = selection.first;
-        if (selected == _transportMode) {
-          return;
-        }
-        _activateTransport(selected);
-      },
     );
   }
 
@@ -416,31 +285,6 @@ class _MainPageState extends State<MainPage>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (_transportMode == TransportMode.bluetooth)
-                              ...[
-                                _buildMenuItem(
-                                  icon: Icons.bluetooth_searching,
-                                  text: '选择蓝牙设备',
-                                  onTap: () {
-                                    _closeMenu();
-                                    _showBluetoothDevicePicker();
-                                  },
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(
-                                      AppSpacing.borderRadius,
-                                    ),
-                                    topRight: Radius.circular(
-                                      AppSpacing.borderRadius,
-                                    ),
-                                  ),
-                                ),
-                                const Divider(
-                                  height: 1,
-                                  color: AppColors.divider,
-                                  indent: AppSpacing.md,
-                                  endIndent: AppSpacing.md,
-                                ),
-                              ],
                             _buildMenuItem(
                               icon: Icons.refresh,
                               text: '刷新连接',
@@ -448,17 +292,10 @@ class _MainPageState extends State<MainPage>
                                 _closeMenu();
                                 _refreshConnection();
                               },
-                              borderRadius: _transportMode ==
-                                      TransportMode.bluetooth
-                                  ? null
-                                  : const BorderRadius.only(
-                                      topLeft: Radius.circular(
-                                        AppSpacing.borderRadius,
-                                      ),
-                                      topRight: Radius.circular(
-                                        AppSpacing.borderRadius,
-                                      ),
-                                    ),
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(AppSpacing.borderRadius),
+                                topRight: Radius.circular(AppSpacing.borderRadius),
+                              ),
                             ),
                             const Divider(
                               height: 1,
@@ -483,9 +320,9 @@ class _MainPageState extends State<MainPage>
                             _buildToggleMenuItem(
                               icon: Icons.keyboard_return,
                               text: '自动 Enter',
-                              isEnabled: _controller?.autoEnterEnabled ?? false,
+                              isEnabled: _controller.autoEnterEnabled,
                               onTap: () {
-                                _controller?.toggleAutoEnter();
+                                _controller.toggleAutoEnter();
                               },
                             ),
                           ],
@@ -624,7 +461,7 @@ class _MainPageState extends State<MainPage>
     );
   }
 
-  Widget _buildInputArea(TransportConnectionController controller) {
+  Widget _buildInputArea() {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -632,7 +469,7 @@ class _MainPageState extends State<MainPage>
       ),
       padding: const EdgeInsets.all(AppSpacing.componentPadding),
       child: TextField(
-        controller: controller.textController,
+        controller: _controller.textController,
         maxLines: null,
         expands: true,
         decoration: const InputDecoration(
@@ -651,7 +488,7 @@ class _MainPageState extends State<MainPage>
         ),
         cursorColor: AppColors.primary,
         textInputAction: TextInputAction.send,
-        onSubmitted: (_) => controller.sendText(),
+        onSubmitted: (_) => _controller.sendText(),
       ),
     );
   }

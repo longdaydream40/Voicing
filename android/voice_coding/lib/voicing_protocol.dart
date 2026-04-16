@@ -4,15 +4,11 @@ class VoicingProtocol {
   static const String defaultServerIp = '192.168.137.1';
   static const int websocketPort = 9527;
   static const int udpBroadcastPort = 9530;
-  static const int bluetoothRfcommChannel = 11;
   static const int heartbeatIntervalSec = 15;
   static const int heartbeatTimeoutSec = 30;
   static const int connectTimeoutSec = 8;
   static const int maxReconnectDelaySec = 30;
   static const int udpReconnectCooldownMs = 3000;
-  static const String bluetoothServiceUuid =
-      '8b3e3f4b-6f8f-4f2f-9d5d-77f4f84f9d11';
-  static const String bluetoothMessageDelimiter = '\n';
 
   static const String udpDiscoveryType = 'voice_coding_server';
 

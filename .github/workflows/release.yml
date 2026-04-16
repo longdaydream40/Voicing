@@ -44,16 +44,16 @@ jobs:
           | 文件 | 平台 | 说明 |
           |------|------|------|
           | `voicing.apk` | Android | 手机安装包 |
-          | `voicing-windows-x64.exe` | Windows | Windows 10/11 (64-bit) + 蓝牙 |
-          | `voicing-macos-arm64.dmg` | macOS | Apple Silicon / arm64 + 局域网 |
-          | `voicing-linux-x86_64` | Ubuntu | Ubuntu 24.04 GNOME on X11 + 蓝牙 |
+          | `voicing-windows-x64.exe` | Windows | Windows 10/11 (64-bit) |
+          | `voicing-macos-arm64.dmg` | macOS | Apple Silicon / arm64 |
+          | `voicing-linux-x86_64` | Ubuntu | Ubuntu 22.04 GNOME on X11 |
 
           ### 系统要求
 
           - Windows 10/11 (64位)
           - Android 5.0+ (API 21+)
-          - macOS 15+（Apple Silicon / arm64，电脑和手机需在同一局域网，首次打开需右键→打开，并授予 Accessibility 权限）
-          - Ubuntu 24.04 GNOME on X11（需系统蓝牙已配对；Wayland 不在支持范围内）
+          - macOS 14+（Apple Silicon / arm64，首次打开需右键→打开，并授予 Accessibility 权限）
+          - Ubuntu 22.04 GNOME on X11（Wayland 不在支持范围内）
 
           EOF
 
@@ -149,7 +149,7 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py bluetooth_server.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
 
       - name: Build EXE with PyInstaller
@@ -186,7 +186,7 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py bluetooth_server.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
 
       - name: Generate macOS icon
@@ -261,12 +261,12 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py bluetooth_server.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
 
       - name: Build Linux executable
         working-directory: pc
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name=Voicing --add-data "assets:assets" --hidden-import=dbus_fast --hidden-import=dbus_fast.aio --hidden-import=dbus_fast.annotations --hidden-import=dbus_fast.service voice_coding.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name=Voicing --add-data "assets:assets" voice_coding.py
 
       - name: Rename artifact
         run: cp pc/dist/Voicing pc/dist/voicing-linux-x86_64

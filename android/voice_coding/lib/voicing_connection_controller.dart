@@ -9,15 +9,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'app_logger.dart';
 import 'connection_recovery_policy.dart';
-import 'transport_connection_controller.dart';
 import 'voicing_protocol.dart';
 
-class VoicingConnectionController extends ChangeNotifier
-    implements TransportConnectionController {
+class VoicingConnectionController extends ChangeNotifier {
   static const Duration _shadowFinalizeDelay = Duration(milliseconds: 700);
 
   VoicingConnectionController({
-    TextEditingController? textController,
     ConnectionRecoveryPolicy recoveryPolicy = const ConnectionRecoveryPolicy(
       heartbeatTimeout: Duration(
         seconds: VoicingProtocol.heartbeatTimeoutSec,
@@ -32,13 +29,11 @@ class VoicingConnectionController extends ChangeNotifier
         seconds: VoicingProtocol.maxReconnectDelaySec,
       ),
     ),
-  })  : _recoveryPolicy = recoveryPolicy,
-        textController = textController ?? TextEditingController() {
-    this.textController.addListener(_onTextControllerChanged);
+  }) : _recoveryPolicy = recoveryPolicy {
+    textController.addListener(_onTextControllerChanged);
   }
 
-  @override
-  final TextEditingController textController;
+  final TextEditingController textController = TextEditingController();
   final ConnectionRecoveryPolicy _recoveryPolicy;
 
   WebSocketChannel? _channel;
@@ -64,31 +59,22 @@ class VoicingConnectionController extends ChangeNotifier
   Timer? _shadowFinalizeTimer;
   bool _displayConnectedDuringForegroundRecovery = false;
 
-  @override
   ConnectionStatus get status => _status;
-  @override
   ConnectionStatus get displayStatus => _displayConnectedDuringForegroundRecovery
       ? ConnectionStatus.connected
       : _status;
-  @override
   bool get syncEnabled => _syncEnabled;
-  @override
   bool get autoEnterEnabled => _autoEnterEnabled;
   String get serverIp => _serverIp;
   int get serverPort => _serverPort;
-  @override
   String get lastSentText => _lastSentText;
-  @override
-  TransportMode get transportMode => TransportMode.wifi;
 
-  @override
   Future<void> initialize() async {
     await _loadAutoEnterPreference();
     await _restartUdpDiscovery(reason: 'init');
     _forceReconnect(resetBackoff: true, reason: 'init');
   }
 
-  @override
   Future<void> handleLifecycleState(AppLifecycleState state) async {
     if (state == AppLifecycleState.paused) {
       _stopHeartbeat();
@@ -100,12 +86,10 @@ class VoicingConnectionController extends ChangeNotifier
     }
   }
 
-  @override
   void refreshConnection() {
     _forceReconnect(resetBackoff: true, reason: 'manual refresh');
   }
 
-  @override
   void recallLastText() {
     if (_lastSentText.isEmpty) {
       return;
@@ -117,7 +101,6 @@ class VoicingConnectionController extends ChangeNotifier
     );
   }
 
-  @override
   void sendText() {
     final text = textController.text.trim();
     if (text.isEmpty || _status != ConnectionStatus.connected || !_syncEnabled) {
@@ -157,6 +140,7 @@ class VoicingConnectionController extends ChangeNotifier
     textController.removeListener(_onTextControllerChanged);
     _connectionGeneration++;
     _channel?.sink.close();
+    textController.dispose();
     _udpSubscription?.cancel();
     _udpSubscription = null;
     _udpSocket?.close();
@@ -577,7 +561,6 @@ class VoicingConnectionController extends ChangeNotifier
     }
   }
 
-  @override
   Future<void> toggleAutoEnter() async {
     _autoEnterEnabled = !_autoEnterEnabled;
     notifyListeners();
