@@ -9,6 +9,7 @@ APP_NAME = "Voicing"
 WINDOWS_HOTSPOT_PREFIXES = ("192.168.137.",)
 MACOS_HOTSPOT_PREFIXES = ("192.168.2.",)
 LINUX_HOTSPOT_PREFIXES = ("10.42.0.",)
+COMMON_LAN_PREFIXES = ("192.168.0.", "192.168.1.", "10.0.")
 
 
 def get_platform() -> str:
@@ -92,6 +93,13 @@ def get_preferred_hotspot_prefixes() -> tuple[str, ...]:
 
 def get_known_hotspot_prefixes() -> tuple[str, ...]:
     return WINDOWS_HOTSPOT_PREFIXES + MACOS_HOTSPOT_PREFIXES + LINUX_HOTSPOT_PREFIXES
+
+
+def get_preferred_local_network_prefixes() -> tuple[str, ...]:
+    platform_name = get_platform()
+    if platform_name == "darwin":
+        return COMMON_LAN_PREFIXES + MACOS_HOTSPOT_PREFIXES
+    return get_preferred_hotspot_prefixes()
 
 
 def is_wayland_session() -> bool:

@@ -21,6 +21,16 @@ void main() {
     expect(VoicingProtocol.defaultServerIp, '192.168.137.1');
   });
 
+  test('bluetooth transport metadata matches contract', () {
+    final bluetooth = contract['bluetooth'] as Map<String, dynamic>;
+    expect(VoicingProtocol.bluetoothRfcommChannel, bluetooth['rfcomm_channel']);
+    expect(VoicingProtocol.bluetoothServiceUuid, bluetooth['service_uuid']);
+    expect(
+      VoicingProtocol.bluetoothMessageDelimiter,
+      bluetooth['message_delimiter'],
+    );
+  });
+
   test('udp discovery type matches contract', () {
     final udpDiscovery = contract['udp_discovery'] as Map<String, dynamic>;
     expect(VoicingProtocol.udpDiscoveryType, udpDiscovery['type']);

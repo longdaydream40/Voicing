@@ -3,6 +3,11 @@
     "websocket": 9527,
     "udp_broadcast": 9530
   },
+  "bluetooth": {
+    "rfcomm_channel": 11,
+    "service_uuid": "8b3e3f4b-6f8f-4f2f-9d5d-77f4f84f9d11",
+    "message_delimiter": "\n"
+  },
   "udp_discovery": {
     "type": "voice_coding_server",
     "required_fields": [

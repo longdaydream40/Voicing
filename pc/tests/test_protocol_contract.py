@@ -6,6 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from voicing_protocol import (
+    BLUETOOTH_MESSAGE_DELIMITER,
+    BLUETOOTH_RFCOMM_CHANNEL,
+    BLUETOOTH_SERVICE_UUID,
     CLIENT_TO_SERVER_TYPES,
     DEFAULT_SERVER_IP,
     SERVER_TO_CLIENT_TYPES,
@@ -38,6 +41,12 @@ class ProtocolContractTests(unittest.TestCase):
         self.assertEqual(WEBSOCKET_PORT, ports["websocket"])
         self.assertEqual(UDP_BROADCAST_PORT, ports["udp_broadcast"])
         self.assertEqual(DEFAULT_SERVER_IP, "192.168.137.1")
+
+    def test_bluetooth_transport_contract_matches(self):
+        bluetooth = self.contract["bluetooth"]
+        self.assertEqual(BLUETOOTH_RFCOMM_CHANNEL, bluetooth["rfcomm_channel"])
+        self.assertEqual(BLUETOOTH_SERVICE_UUID, bluetooth["service_uuid"])
+        self.assertEqual(BLUETOOTH_MESSAGE_DELIMITER, bluetooth["message_delimiter"])
 
     def test_udp_discovery_type_matches_contract(self):
         self.assertEqual(UDP_DISCOVERY_TYPE, self.contract["udp_discovery"]["type"])

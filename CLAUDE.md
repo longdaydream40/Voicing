@@ -1,12 +1,16 @@
 # Voicing 开发规范
 
-## 当前状态（2026-04-15）
+## 当前状态（2026-04-16）
 
-- 当前版本：`v2.6.2`
-- 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/tag/v2.6.2`
+- 当前版本：`v2.8.0`
+- 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/tag/v2.8.0`
 - 最新构建产物：
-  - `voicing.apk`（21.0 MB）
-  - `voicing.exe`（49.4 MB）
+  - `voicing.apk`（Android）
+  - `voicing-windows-x64.exe`（Windows）
+  - `voicing-macos-arm64.dmg`（macOS Apple Silicon）
+  - `voicing-linux-x86_64`（Ubuntu 24.04+ GNOME X11）
+- 桌面端架构：平台抽象层（`platform_utils` / `platform_keyboard` / `platform_autostart` / `platform_instance`）
+- 传输架构：Windows/Linux 走经典蓝牙 RFCOMM，macOS 走 WiFi（UDP + WebSocket）
 - Android 息屏亮屏恢复：前台恢复窗口 + UDP 监听重建 + 快速重连
 - 自动 Enter：`submit / shadow / commit` 三段式协议，避免语音分段时多次回车
 
@@ -52,7 +56,7 @@ Error resolving plugin [id: 'dev.flutter.flutter-plugin-loader', version: '1.0.0
 **当前现状**：
 - 本机 `flutter doctor --verbose` 显示 Android toolchain 正在使用 Java 25
 - 本地 `flutter build apk --release` 会因 Java 25 / Gradle 兼容性失败
-- GitHub Actions 发布环境使用 Java 17，`v2.6.2` APK 已成功构建
+- GitHub Actions 发布环境使用 Java 17，`v2.8.0` APK 已成功构建
 
 **解决方案**：安装兼容的 JDK 17/21，并在 `android/voice_coding/android/local.properties` 中指定 Java 路径（此文件不提交到 Git）：
 ```properties
@@ -71,13 +75,23 @@ flutter run
 
 ## 项目架构
 
-### PC 端 (Python)
+### 桌面端 (Python + PyQt5) — 支持 Windows / macOS / Linux
 - **主程序**: `pc/voice_coding.py`
+- **蓝牙服务器**: `pc/bluetooth_server.py`
+- **平台抽象层**:
+  - `pc/platform_utils.py` — 平台检测、路径、文件打开、字体
+  - `pc/platform_keyboard.py` — 键盘模拟（Enter + 粘贴，macOS 用 Cmd+V）
+  - `pc/platform_autostart.py` — 开机自启（注册表 / LaunchAgents / XDG）
+  - `pc/platform_instance.py` — 单实例检测（Mutex / flock）
+- **协议**: `pc/voicing_protocol.py`
+- **网络恢复**: `pc/network_recovery.py`
 - **依赖**: `pc/requirements.txt`
 
 ### Android 端 (Flutter)
 - **主程序**: `android/voice_coding/lib/main.dart`
 - **连接状态机**: `android/voice_coding/lib/voicing_connection_controller.dart`
+- **蓝牙控制器**: `android/voice_coding/lib/bluetooth_connection_controller.dart`
+- **蓝牙桥接**: `android/voice_coding/lib/bluetooth_bridge.dart`
 - **恢复策略**: `android/voice_coding/lib/connection_recovery_policy.dart`
 - **协议常量**: `android/voice_coding/lib/voicing_protocol.dart`
 - **依赖**: `android/voice_coding/pubspec.yaml`
@@ -110,16 +124,16 @@ flutter test
 flutter analyze --no-fatal-infos --no-fatal-warnings
 ```
 
-### PC 端验证
+### 桌面端验证
 ```bash
 cd pc
 python -m unittest discover -s tests
-python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
+python -m py_compile voice_coding.py bluetooth_server.py network_recovery.py voicing_protocol.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py
 ```
 
 ---
 
-## 当前协议约束（v2.6.2）
+## 当前协议约束（v2.8.0）
 
 - `TYPE_TEXT` 现在带 `send_mode`
   - `submit`：普通手动发送，可选 `auto_enter`
@@ -128,6 +142,10 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 - `ack` 现在带 `clear_input`
   - 仅 `submit` 由服务端确认后清空输入框
   - `shadow / commit` 改为客户端自己控制 finalize 与清空时机
+- 蓝牙传输元数据：
+  - `service_uuid = 8b3e3f4b-6f8f-4f2f-9d5d-77f4f84f9d11`
+  - `rfcomm_channel = 11`
+  - `message_delimiter = \n`
 
 ---
 
@@ -209,17 +227,21 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 
 ### ✅ 已完成功能
 
-#### PC 端托盘图标优化 (v2.3.0) - 最新
+#### PC 端托盘图标优化 (v2.3.0 → v2.7.0 跨平台)
 - **圆形图标**：256px 高清，圆形外轮廓
 - **图标缓存**：预缓存 normal/dim/paused 三种状态，闪烁均匀
 - **悬停提示**：鼠标悬停显示 "Voicing"
-- **只响应右键**：左键不触发菜单
+- **左键+右键均可触发菜单**：适配 Windows（右键习惯）和 macOS/Linux（左键习惯）
 - **菜单预加载**：首次打开快速
+- **菜单方向自适应**：Windows 向上弹，macOS/Linux 向下弹
 
 #### PC 端托盘菜单 (v1.8.0)
 - **Windows 11 Fluent Design 风格** - 完整实现
 - **悬停高亮效果** - 使用 `paintEvent` + `WA_TransparentForMouseEvents` 解决
-- **日志系统** - 日志文件位于 `%APPDATA%\Voicing\logs\`
+- **日志系统** - 日志文件位于各平台标准路径：
+  - Windows: `%APPDATA%\Voicing\logs\`
+  - macOS: `~/Library/Logs/Voicing/`
+  - Linux: `~/.local/share/Voicing/logs/`
 - **菜单项**:
   - 📡 同步输入（开关）
   - 🚀 开机自启（开关）
@@ -254,11 +276,15 @@ def enterEvent(self, event):
 
 | 文件 | 说明 |
 |------|------|
-| `pc/voice_coding.py` | PC 端主程序 |
-| `pc/voice_coding.py:695-800` | `MenuItemWidget` 类 - 菜单项组件 |
-| `pc/voice_coding.py:802-970` | `ModernMenuWidget` 类 - 菜单容器 |
-| `pc/voice_coding.py:972-1070` | `ModernTrayIcon` 类 - 托盘图标 |
-| `pc/voice_coding.py:138-170` | `setup_logging()` 日志配置 |
+| `pc/voice_coding.py` | 桌面端主程序（1011 行） |
+| `pc/platform_utils.py` | 平台检测、路径、热点网段、字体（109 行） |
+| `pc/platform_keyboard.py` | 键盘模拟抽象：Windows SendInput / macOS Cmd+V / Linux Ctrl+V（90 行） |
+| `pc/platform_autostart.py` | 开机自启：注册表 / LaunchAgents / XDG autostart（137 行） |
+| `pc/platform_instance.py` | 单实例检测：Mutex / flock（63 行） |
+| `pc/voice_coding.py:447-500` | `MenuItemWidget` 类 - 菜单项组件 |
+| `pc/voice_coding.py:570-763` | `ModernMenuWidget` 类 - 菜单容器 |
+| `pc/voice_coding.py:766-878` | `ModernTrayIcon` 类 - 托盘图标 |
+| `pc/voice_coding.py:100-123` | `setup_logging()` 日志配置 |
 
 ### 🔧 开发工具
 
