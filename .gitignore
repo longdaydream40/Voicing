@@ -78,7 +78,10 @@ android/bin/
 pc/build/
 pc/dist/
 pc/*.spec
+!pc/Voicing-macos.spec
 pc/@AutomationLog.txt
+pc/assets/icon.icns
+pc/assets/Voicing.iconset/
 
 # Generated certificates
 pc/certs/

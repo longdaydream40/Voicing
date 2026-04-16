@@ -1,5 +1,9 @@
 import json
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
 

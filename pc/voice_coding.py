@@ -7,39 +7,49 @@ A system tray application that receives text from phone and types it at cursor p
 """
 
 import asyncio
-import socket
-import sys
-import os
-import threading
-import winreg
 import json
-import ctypes
 import logging
+import os
+import re
+import socket
 import subprocess
-import time
+import sys
+import threading
 from datetime import datetime
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 # PyQt5 for modern tray menu
 from PyQt5.QtWidgets import (
-    QApplication, QSystemTrayIcon, QMenu, QAction,
+    QApplication, QSystemTrayIcon, QMessageBox,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QStyle, QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect,
 )
-from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QCursor, QPen, QBrush
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QCursor
 
 # Third-party imports
 import websockets
 from websockets.server import serve
-import pyautogui
 from PIL import Image, ImageDraw
 import pyperclip
 
 from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
+from platform_autostart import is_startup_enabled, set_startup_enabled
+from platform_instance import check_single_instance, show_already_running_message
+from platform_keyboard import paste_from_clipboard, press_enter
+from platform_utils import (
+    ensure_runtime_supported,
+    get_default_hotspot_ip,
+    get_known_hotspot_prefixes,
+    get_log_dir,
+    get_native_font_family,
+    get_platform,
+    get_preferred_hotspot_prefixes,
+    open_file_in_default_app,
+    open_file_in_text_editor,
+)
 from voicing_protocol import (
-    DEFAULT_SERVER_IP,
     TYPE_PING,
     TYPE_TEXT,
     WEBSOCKET_PORT,
@@ -54,121 +64,13 @@ from voicing_protocol import (
 )
 
 # ============================================================
-# Single Instance Check / 单实例检查
-# ============================================================
-MUTEX_NAME = "Voicing_SingleInstance_Mutex"
-
-def check_single_instance() -> bool:
-    """
-    Check if another instance is already running / 检查是否已有实例在运行
-    Returns True if this is the only instance, False if another is running.
-    """
-    # Try to create a named mutex
-    kernel32 = ctypes.windll.kernel32
-    mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-    last_error = kernel32.GetLastError()
-    
-    # ERROR_ALREADY_EXISTS = 183
-    if last_error == 183:
-        # Another instance is already running
-        kernel32.CloseHandle(mutex)
-        return False
-    
-    # Store mutex handle globally to keep it alive
-    global _mutex_handle
-    _mutex_handle = mutex
-    return True
-
-
-def show_already_running_message():
-    """Show message that app is already running / 显示程序已运行的提示"""
-    ctypes.windll.user32.MessageBoxW(
-        0,
-        "Voicing 已经在运行中！\n\n请查看系统托盘图标。\n\nVoicing is already running!\nPlease check the system tray.",
-        "Voicing",
-        0x40  # MB_ICONINFORMATION
-    )
-
-
-# ============================================================
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.6.2"
+APP_VERSION = "2.7.0"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
-STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTO_ENTER_SETTLE_DELAY_SEC = 0.15
-
-# Disable pyautogui failsafe (moving to corner won't stop it)
-pyautogui.FAILSAFE = False
-# Small pause between keystrokes for stability
-pyautogui.PAUSE = 0.01
-
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
-VK_RETURN = 0x0D
-ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
-
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", ctypes.c_ushort),
-        ("wScan", ctypes.c_ushort),
-        ("dwFlags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
-        ("dwExtraInfo", ULONG_PTR),
-    ]
-
-
-class _INPUTUNION(ctypes.Union):
-    _fields_ = [
-        ("ki", KEYBDINPUT),
-    ]
-
-
-class INPUT(ctypes.Structure):
-    _anonymous_ = ("data",)
-    _fields_ = [
-        ("type", ctypes.c_ulong),
-        ("data", _INPUTUNION),
-    ]
-
-
-def _send_keyboard_input(*inputs: "INPUT"):
-    sent = ctypes.windll.user32.SendInput(
-        len(inputs),
-        (INPUT * len(inputs))(*inputs),
-        ctypes.sizeof(INPUT),
-    )
-    if sent != len(inputs):
-        raise ctypes.WinError(ctypes.get_last_error())
-
-
-def _build_keyboard_input(vk_code: int, flags: int = 0) -> "INPUT":
-    return INPUT(
-        type=INPUT_KEYBOARD,
-        ki=KEYBDINPUT(
-            wVk=vk_code,
-            wScan=0,
-            dwFlags=flags,
-            time=0,
-            dwExtraInfo=0,
-        ),
-    )
-
-
-def press_enter_key():
-    """
-    Press Enter using Win32 SendInput.
-    使用 Win32 SendInput 发送 Enter，避免部分应用把 pyautogui 的旧式事件处理得不稳定。
-    """
-    try:
-        _send_keyboard_input(
-            _build_keyboard_input(VK_RETURN),
-            _build_keyboard_input(VK_RETURN, KEYEVENTF_KEYUP),
-        )
-    except Exception:
-        pyautogui.press('enter')
+NATIVE_FONT_FAMILY = get_native_font_family()
 
 
 # ============================================================
@@ -198,7 +100,7 @@ state = AppState()
 def setup_logging():
     """设置日志系统"""
     # 日志文件保存在用户数据目录
-    log_dir = Path(os.environ.get('APPDATA', Path.home())) / 'Voicing' / 'logs'
+    log_dir = get_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     
     # 使用日期作为文件名
@@ -224,8 +126,8 @@ def setup_logging():
 # ============================================================
 # Network Configuration / 网络配置
 # ============================================================
-# Windows Mobile Hotspot default IP / Windows 移动热点默认 IP
-DEFAULT_HOTSPOT_IP = DEFAULT_SERVER_IP
+# Platform hotspot default IP / 平台热点默认 IP
+DEFAULT_HOTSPOT_IP = get_default_hotspot_ip()
 # UDP broadcast configuration / UDP 广播配置
 UDP_BROADCAST_INTERVAL = 2  # 广播间隔（秒）
 
@@ -238,52 +140,93 @@ def get_hotspot_ip() -> str:
     will try to detect the actual IP by looking for the hotspot adapter.
     """
     try:
-        import socket
-        
-        # Method 1: Try to find hotspot adapter by checking common hotspot IP ranges
-        for adapter_ip in get_all_local_ips():
-            # Windows Mobile Hotspot typically uses 192.168.137.x
-            if adapter_ip.startswith("192.168.137."):
-                return adapter_ip
-        
-        # Method 2: Fallback to default
+        all_local_ips = get_all_local_ips()
+        for prefixes in (get_preferred_hotspot_prefixes(), get_known_hotspot_prefixes()):
+            for adapter_ip in all_local_ips:
+                if any(adapter_ip.startswith(prefix) for prefix in prefixes):
+                    return adapter_ip
+
+        if all_local_ips:
+            return all_local_ips[0]
+
         return DEFAULT_HOTSPOT_IP
-        
+
     except Exception as e:
-        print(f"Error detecting hotspot IP: {e}")
+        logging.warning(f"Error detecting hotspot IP: {e}")
         return DEFAULT_HOTSPOT_IP
 
 
 def get_all_local_ips() -> list:
     """Get all local IP addresses / 获取所有本地 IP 地址"""
     ips = []
+    seen = set()
+
+    def add_ip(ip: str) -> None:
+        if ip and not ip.startswith("127.") and ip not in seen:
+            seen.add(ip)
+            ips.append(ip)
+
     try:
-        import socket
         hostname = socket.gethostname()
         # Get all addresses associated with hostname
         for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            ip = info[4][0]
-            if ip not in ips and not ip.startswith("127."):
-                ips.append(ip)
+            add_ip(info[4][0])
     except Exception:
         pass
-    
-    # Also try to get IPs from network interfaces directly
-    try:
-        import subprocess
-        result = subprocess.run(
-            ['powershell', '-Command', 
-             "Get-NetIPAddress -AddressFamily IPv4 | Select-Object -ExpandProperty IPAddress"],
-            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        for line in result.stdout.strip().split('\n'):
-            ip = line.strip()
-            if ip and not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
-    
+
+    platform_name = get_platform()
+    ip_discovery_commands = {
+        "windows": [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 | Select-Object -ExpandProperty IPAddress",
+        ],
+        "darwin": ["ifconfig"],
+        "linux": ["ip", "-4", "addr", "show"],
+    }
+    command = ip_discovery_commands.get(platform_name)
+    if command:
+        creationflags = 0
+        if platform_name == "windows":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                creationflags=creationflags,
+                check=False,
+            )
+            for ip in extract_command_ips(platform_name, result.stdout):
+                add_ip(ip)
+        except Exception:
+            pass
+
     return ips
+
+
+def extract_command_ips(platform_name: str, command_output: str) -> list[str]:
+    if platform_name == "windows":
+        return [
+            line.strip()
+            for line in command_output.splitlines()
+            if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", line.strip())
+        ]
+
+    if platform_name == "darwin":
+        return [
+            match.group(1)
+            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b", command_output)
+        ]
+
+    if platform_name == "linux":
+        return [
+            match.group(1)
+            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+\b", command_output)
+        ]
+
+    return []
 
 
 # ============================================================
@@ -345,46 +288,6 @@ HOTSPOT_IP = DEFAULT_HOTSPOT_IP
 
 
 # ============================================================
-# Startup Management / 开机启动管理
-# ============================================================
-def get_exe_path() -> str:
-    """Get the path of the running executable / 获取当前运行程序路径"""
-    if getattr(sys, 'frozen', False):
-        return sys.executable
-    return os.path.abspath(__file__)
-
-
-def is_startup_enabled() -> bool:
-    """Check if app is set to start with Windows / 检查是否已设置开机启动"""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_READ) as key:
-            winreg.QueryValueEx(key, APP_NAME)
-            return True
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-
-def set_startup_enabled(enabled: bool) -> bool:
-    """Enable or disable startup with Windows / 启用或禁用开机启动"""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            if enabled:
-                exe_path = get_exe_path()
-                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
-            else:
-                try:
-                    winreg.DeleteValue(key, APP_NAME)
-                except FileNotFoundError:
-                    pass
-        return True
-    except Exception as e:
-        print(f"Failed to modify startup setting: {e}")
-        return False
-
-
-# ============================================================
 # Text Input / 文本输入
 # ============================================================
 def type_text(text: str, auto_enter: bool = False):
@@ -392,7 +295,7 @@ def type_text(text: str, auto_enter: bool = False):
     Type text at current cursor position.
     在当前光标位置输入文本。
 
-    Uses pyautogui.write for ASCII and pyperclip+paste for Unicode.
+    Uses clipboard paste for cross-platform Unicode input.
 
     Args:
         text: Text to type
@@ -402,8 +305,7 @@ def type_text(text: str, auto_enter: bool = False):
         return
 
     try:
-        # For Unicode support, use clipboard paste method
-        import pyperclip
+        ensure_runtime_supported()
 
         # Save current clipboard
         try:
@@ -413,26 +315,24 @@ def type_text(text: str, auto_enter: bool = False):
 
         # Copy new text and paste
         pyperclip.copy(text)
-        pyautogui.hotkey('ctrl', 'v', interval=0.02)
+        paste_from_clipboard()
 
         # Auto press Enter if enabled
         if auto_enter:
-            import time
             # Give the target app time to process Ctrl+V before sending Enter.
             # Some chat inputs mis-handle an immediate Enter as Ctrl+Enter/newline.
-            time.sleep(AUTO_ENTER_SETTLE_DELAY_SEC)
-            press_enter_key()
+            threading.Event().wait(AUTO_ENTER_SETTLE_DELAY_SEC)
+            press_enter()
 
         # Small delay then restore clipboard
-        import time
-        time.sleep(0.1)
+        threading.Event().wait(0.1)
         try:
             pyperclip.copy(old_clipboard)
         except Exception:
             pass
 
     except Exception as e:
-        print(f"Error typing text: {e}")
+        logging.error(f"Error typing text: {e}")
 
 
 # ============================================================
@@ -476,7 +376,7 @@ async def handle_client(websocket):
                     auto_enter = data.get("auto_enter", False) and send_mode == TEXT_SEND_MODE_SUBMIT
                     if send_mode == TEXT_SEND_MODE_COMMIT:
                         if data.get("auto_enter", False):
-                            await asyncio.to_thread(press_enter_key)
+                            await asyncio.to_thread(press_enter)
                         await websocket.send(json.dumps(build_ack_message(
                             clear_input=False,
                         )))
@@ -578,12 +478,12 @@ class MenuItemWidget(QWidget):
         self.text_label.setStyleSheet("""
             QLabel {
                 color: #FFFFFF;
-                font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+                font-family: %s;
                 font-size: 13px;
                 font-weight: 400;
                 background: transparent;
             }
-        """)
+        """ % NATIVE_FONT_FAMILY)
         self.text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.text_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
@@ -640,12 +540,12 @@ class MenuItemWidget(QWidget):
             self.status_label.setStyleSheet("""
                 QLabel {
                     color: #60CDFF;
-                    font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+                    font-family: %s;
                     font-size: 14px;
                     font-weight: bold;
                     background: transparent;
                 }
-            """)
+            """ % NATIVE_FONT_FAMILY)
         else:
             self.status_label.setText("")
             self.status_label.setStyleSheet("background: transparent;")
@@ -753,18 +653,34 @@ class ModernMenuWidget(QWidget):
         """在指定位置显示菜单（菜单左下角对齐鼠标点击位置）"""
         # 获取菜单尺寸
         self.adjustSize()
+        menu_width = self.width()
         menu_height = self.height()
+        screen = QApplication.primaryScreen()
+        available_geometry = screen.availableGeometry() if screen else None
 
-        # 菜单左下角对齐鼠标点击位置
-        x = tray_pos.x() - 8  # 向左偏移一点，让菜单边缘靠近鼠标
-        y = tray_pos.y() - menu_height  # 菜单底部对齐鼠标位置
+        x = tray_pos.x() - 8
+        if get_platform() == "windows":
+            target_y = tray_pos.y() - menu_height
+            animation_start_y = target_y + 16
+        else:
+            target_y = tray_pos.y()
+            animation_start_y = target_y - 16
 
-        self.target_y = y
-        self.move(x, y)
+        if available_geometry:
+            min_x = available_geometry.left() + 8
+            max_x = available_geometry.right() - menu_width - 8
+            x = max(min_x, min(x, max_x))
+            min_y = available_geometry.top() + 8
+            max_y = available_geometry.bottom() - menu_height - 8
+            target_y = max(min_y, min(target_y, max_y))
+            animation_start_y = max(min_y, min(animation_start_y, max_y))
 
-        # 从下往上滑出的动画
+        self.target_y = target_y
+        self.animation_start_y = animation_start_y
+        self.move(x, target_y)
+
         self.animation_step = 0
-        self.move(x, y + 16)  # 从下方开始
+        self.move(x, animation_start_y)
         self.setWindowOpacity(0.0)
         self.show()
         self.animation_timer.start(16)  # 60fps
@@ -783,8 +699,7 @@ class ModernMenuWidget(QWidget):
             progress = self.animation_step / self.animation_max_steps
             eased = 1 - pow(1 - progress, 2)  # easeOutQuad
 
-            # 从下往上滑
-            current_y = self.target_y + 16 * (1 - eased)
+            current_y = self.animation_start_y + (self.target_y - self.animation_start_y) * eased
             self.move(self.pos().x(), int(current_y))
 
             # 淡入
@@ -823,13 +738,11 @@ class ModernMenuWidget(QWidget):
         """打开日志文件"""
         self.close_with_animation()
         if state.log_file and state.log_file.exists():
-            # 用默认文本编辑器打开日志文件
-            subprocess.Popen(['notepad.exe', str(state.log_file)])
+            open_file_in_text_editor(state.log_file)
         else:
-            # 打开日志目录
-            log_dir = Path(os.environ.get('APPDATA', Path.home())) / 'Voicing' / 'logs'
+            log_dir = get_log_dir()
             log_dir.mkdir(parents=True, exist_ok=True)
-            os.startfile(str(log_dir))
+            open_file_in_default_app(log_dir)
 
     def quit_app(self):
         """退出应用"""
@@ -934,8 +847,7 @@ class ModernTrayIcon(QSystemTrayIcon):
 
     def on_tray_activated(self, reason):
         """托盘图标激活事件"""
-        if reason == QSystemTrayIcon.Context:
-            # 只有右键点击才显示菜单
+        if reason in (QSystemTrayIcon.Context, QSystemTrayIcon.Trigger):
             self.show_custom_menu()
 
     def show_custom_menu(self):
@@ -1006,6 +918,8 @@ def run_tray():
         app = QApplication.instance()
 
     app.setQuitOnLastWindowClosed(False)
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        raise RuntimeError("当前桌面环境不提供系统托盘，Voicing 无法继续运行。")
 
     # 创建现代托盘图标
     tray_icon = ModernTrayIcon()
@@ -1047,6 +961,12 @@ def main():
 
     # 初始化日志系统
     setup_logging()
+    try:
+        ensure_runtime_supported()
+    except RuntimeError as exc:
+        logging.error(str(exc))
+        show_fatal_message("Voicing 无法启动", str(exc))
+        return
 
     # Detect hotspot IP at startup
     HOTSPOT_IP = get_hotspot_ip()
@@ -1060,8 +980,19 @@ def main():
     udp_thread = threading.Thread(target=start_udp_broadcast, daemon=True)
     udp_thread.start()
 
-    # Run tray icon with PyQt5 in main thread
-    run_tray()
+    try:
+        run_tray()
+    except RuntimeError as exc:
+        logging.error(str(exc))
+        show_fatal_message("Voicing 无法启动", str(exc))
+
+
+def show_fatal_message(title: str, message: str) -> None:
+    owns_app = QApplication.instance() is None
+    app = QApplication.instance() if not owns_app else QApplication([])
+    QMessageBox.critical(None, title, message)
+    if owns_app:
+        app.quit()
 
 
 if __name__ == "__main__":

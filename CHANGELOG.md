@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-04-16
+
+### 新增
+
+- **macOS 桌面端支持（Apple Silicon / arm64）**
+  - PC 端拆出平台抽象层，支持 macOS 的日志目录、托盘菜单、自启和输入热键
+  - 发布产物新增 `voicing-macos-arm64.dmg`
+  - macOS `.app` bundle 写入 `LSUIElement=true`，以托盘常驻应用形态运行
+
+- **Ubuntu 22.04 GNOME on X11 桌面端支持**
+  - PC 端支持 Linux 的日志目录、`.desktop` 自启、托盘交互和 Ctrl+V 输入
+  - 发布产物新增 `voicing-linux-x86_64`
+  - 程序启动时会显式阻断 Wayland，会话不满足条件时直接提示，避免静默输入失败
+
+- **跨平台桌面端测试覆盖**
+  - 新增平台工具、键盘和自启模块测试
+  - 桌面端测试命令同时支持仓库根目录和 `pc` 目录执行
+
+### 改进
+
+- **GitHub Actions Release 流程重构**
+  - Android / Windows / macOS / Linux 构建先上传 workflow artifacts
+  - 最终由单独的 publish job 聚合全部产物并一次性创建 GitHub Release
+  - 固定 macOS runner 为 `macos-14`，Linux runner 为 `ubuntu-22.04`
+
+- **Android release 签名链路**
+  - 支持通过 GitHub Secrets 生成 `key.properties` 和 release keystore
+  - 未配置 secrets 时仍保持 debug signing，兼容本地开发与现有 CI 环境
+
+### 测试
+
+- Android：
+  - `flutter test`
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+- PC：
+  - `python -m unittest discover -s pc/tests`
+  - `python -m unittest discover -s tests`
+  - `python -m py_compile pc/voice_coding.py pc/platform_utils.py pc/platform_keyboard.py pc/platform_autostart.py pc/platform_instance.py`
+
+---
+
 ## [2.6.2] - 2026-04-15
 
 ### 修复
