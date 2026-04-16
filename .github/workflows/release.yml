@@ -44,7 +44,7 @@ jobs:
           | 文件 | 平台 | 说明 |
           |------|------|------|
           | `voicing.apk` | Android | 手机安装包 |
-          | `voicing.exe` | Windows | Windows 10/11 (64-bit) |
+          | `voicing-windows-x64.exe` | Windows | Windows 10/11 (64-bit) |
           | `voicing-macos-arm64.dmg` | macOS | Apple Silicon / arm64 |
           | `voicing-linux-x86_64` | Ubuntu | Ubuntu 22.04 GNOME on X11 |
 
@@ -158,13 +158,13 @@ jobs:
 
       - name: Rename EXE
         shell: powershell
-        run: Copy-Item "pc\dist\Voicing.exe" -Destination "pc\dist\voicing.exe"
+        run: Copy-Item "pc\dist\Voicing.exe" -Destination "pc\dist\voicing-windows-x64.exe"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: pc/dist/voicing.exe
+          path: pc/dist/voicing-windows-x64.exe
 
   build-macos:
     name: Build macOS App
@@ -325,7 +325,7 @@ jobs:
           body_path: release-assets/release-notes/release_notes.md
           files: |
             release-assets/android/voicing.apk
-            release-assets/windows/voicing.exe
+            release-assets/windows/voicing-windows-x64.exe
             release-assets/macos/voicing-macos-arm64.dmg
             release-assets/linux/voicing-linux-x86_64
           fail_on_unmatched_files: true
