@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-04-17）
 
-- 当前版本：`v2.7.1`
+- 当前版本：`v2.7.2`
 - 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/latest`
 - 最新构建产物：
   - `voicing.apk`
@@ -121,7 +121,7 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 
 ---
 
-## 当前协议约束（v2.7.1）
+## 当前协议约束（v2.7.2）
 
 - UDP 发现改为**定向广播**：枚举所有私有 IPv4 接口，按子网分别发送，同时覆盖热点和局域网
 - `TYPE_TEXT` 现在带 `send_mode`

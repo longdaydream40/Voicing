@@ -862,15 +862,14 @@ class ModernMenuWidget(QWidget):
         self.container.setGraphicsEffect(shadow)
 
     def show_at_position(self, tray_pos):
-        """在指定位置显示菜单（菜单左下角对齐鼠标点击位置）"""
-        # 获取菜单尺寸
+        """在指定位置显示菜单"""
         self.adjustSize()
         menu_width = self.width()
         menu_height = self.height()
         screen = QApplication.primaryScreen()
         available_geometry = screen.availableGeometry() if screen else None
 
-        x = tray_pos.x() - 8
+        x = tray_pos.x()
         if get_platform() == "windows":
             target_y = tray_pos.y() - menu_height
             animation_start_y = target_y + 16
@@ -879,11 +878,16 @@ class ModernMenuWidget(QWidget):
             animation_start_y = target_y - 16
 
         if available_geometry:
-            min_x = available_geometry.left() + 8
-            max_x = available_geometry.right() - menu_width - 8
+            screen_geometry = screen.geometry() if screen else available_geometry
+            min_x = screen_geometry.left() + 8
+            max_x = screen_geometry.right() - menu_width - 8
             x = max(min_x, min(x, max_x))
-            min_y = available_geometry.top() + 8
-            max_y = available_geometry.bottom() - menu_height - 8
+            if get_platform() == "windows":
+                min_y = screen_geometry.top() + 8
+                max_y = screen_geometry.bottom() - menu_height - 8
+            else:
+                min_y = available_geometry.top() + 8
+                max_y = available_geometry.bottom() - menu_height - 8
             target_y = max(min_y, min(target_y, max_y))
             animation_start_y = max(min_y, min(animation_start_y, max_y))
 

@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/kevinlasnh/Voicing)](https://github.com/kevinlasnh/Voicing/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-blueviolet)](#)
-[![Version](https://img.shields.io/badge/version-2.7.1-green)](#)
+[![Version](https://img.shields.io/badge/version-2.7.2-green)](#)
 
 和 AI 对话时打字太慢？Voicing 让你用嘴代替手
 
@@ -154,8 +154,8 @@ Voicing/
 正式发布通过 GitHub Actions 自动构建（四平台：Android / Windows / macOS / Linux）：
 
 ```bash
-git tag v2.7.1
-git push origin v2.7.1
+git tag v2.7.2
+git push origin v2.7.2
 ```
 
 本地调试用：

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.2] - 2026-04-17
+
+### 修复
+
+- **PC: 托盘右键菜单贴合鼠标位置**
+  - Windows：菜单左下角对齐鼠标点击位置（符合 `TrackPopupMenu` 的 `TPM_LEFTALIGN | TPM_BOTTOMALIGN` 标准行为）
+  - 修复 Windows 任务栏内点击时菜单被强制推到任务栏上方留出 30-50px 缝隙的问题
+  - macOS / Linux 保持菜单左上角对齐图标（向下展开）的标准行为
+
+### 测试
+
+- PC：
+  - `python -m unittest discover -s pc/tests`
+  - `python -m py_compile pc/voice_coding.py`
+  - Windows 本地手动验证：右键托盘图标，菜单左下角贴合鼠标位置
+
+---
+
 ## [2.7.1] - 2026-04-17
 
 ### 改进
