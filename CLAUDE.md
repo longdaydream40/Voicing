@@ -121,8 +121,9 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
 
 ---
 
-## 当前协议约束（v2.6.2）
+## 当前协议约束（v2.7.1）
 
+- UDP 发现改为**定向广播**：枚举所有私有 IPv4 接口，按子网分别发送，同时覆盖热点和局域网
 - `TYPE_TEXT` 现在带 `send_mode`
   - `submit`：普通手动发送，可选 `auto_enter`
   - `shadow`：语音分段增量发送，不直接触发 Enter
