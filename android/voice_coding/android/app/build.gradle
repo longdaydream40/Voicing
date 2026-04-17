@@ -10,6 +10,7 @@ plugins {
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file("key.properties")
 def hasReleaseSigning = keystorePropertiesFile.exists()
+def allowDebugReleaseSigning = project.findProperty("voicing.allowDebugReleaseSigning") == "true"
 
 if (hasReleaseSigning) {
     keystorePropertiesFile.withInputStream { stream ->
@@ -59,4 +60,16 @@ android {
 
 flutter {
     source = "../.."
+}
+
+gradle.taskGraph.whenReady { taskGraph ->
+    def buildingRelease = taskGraph.allTasks.any { task ->
+        task.name.toLowerCase().contains("release")
+    }
+    if (buildingRelease && !hasReleaseSigning && !allowDebugReleaseSigning) {
+        throw new GradleException(
+            "Release signing is required. Configure key.properties or pass " +
+            "-Pvoicing.allowDebugReleaseSigning=true for local-only test builds."
+        )
+    }
 }

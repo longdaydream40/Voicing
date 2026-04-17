@@ -1,14 +1,16 @@
 # Voicing 开发规范
 
-## 当前状态（2026-04-15）
+## 当前状态（2026-04-17）
 
-- 当前版本：`v2.6.2`
-- 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/tag/v2.6.2`
+- 当前版本：`v2.7.1`
+- 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/latest`
 - 最新构建产物：
-  - `voicing.apk`（21.0 MB）
-  - `voicing.exe`（49.4 MB）
-- Android 息屏亮屏恢复：前台恢复窗口 + UDP 监听重建 + 快速重连
-- 自动 Enter：`submit / shadow / commit` 三段式协议，避免语音分段时多次回车
+  - `voicing.apk`
+  - `voicing-windows-x64.exe`
+  - `voicing-macos-arm64.dmg`
+  - `voicing-linux-x86_64`
+- PC 端 UDP 发现：按可用私有 IPv4 接口分别发送定向广播，同时覆盖热点和同一路由器局域网
+- Release 安全性：GitHub Actions 已改为 SHA pin，正式 Android Release 强制校验签名 secrets，并附带 `SHA256SUMS.txt`
 
 ## ⚠️ 强制规则
 
@@ -52,7 +54,7 @@ Error resolving plugin [id: 'dev.flutter.flutter-plugin-loader', version: '1.0.0
 **当前现状**：
 - 本机 `flutter doctor --verbose` 显示 Android toolchain 正在使用 Java 25
 - 本地 `flutter build apk --release` 会因 Java 25 / Gradle 兼容性失败
-- GitHub Actions 发布环境使用 Java 17，`v2.6.2` APK 已成功构建
+- GitHub Actions 发布环境使用 Java 17，正式 Release 会强制要求 Android release signing secrets
 
 **解决方案**：安装兼容的 JDK 17/21，并在 `android/voice_coding/android/local.properties` 中指定 Java 路径（此文件不提交到 Git）：
 ```properties

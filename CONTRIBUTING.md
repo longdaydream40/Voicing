@@ -72,6 +72,8 @@ flutter run
   - `git tag vX.Y.Z`
   - `git push origin vX.Y.Z`
 - Android release 构建在 CI 中固定使用 Java 17
+- 正式 Release 现在要求配置 Android release signing secrets，缺失时 workflow 会直接失败
+- Release 会附带 `SHA256SUMS.txt`，用于产物完整性校验
 
 ---
 

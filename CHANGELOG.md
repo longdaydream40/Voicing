@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.1] - 2026-04-17
+
+### 改进
+
+- **PC: UDP 自动发现支持局域网与热点双模**
+  - 桌面端现在会枚举可广播的私有 IPv4 接口，并分别向每个子网发送定向 UDP 广播
+  - 手机连同一路由器或连电脑热点时，都能收到对应可达 IP 的发现报文
+  - 命令探测失败时不再猜测 `/24` 前缀，改为回退到 `<broadcast>`，避免把广播打到错误子网
+
+- **PC: 网络接口过滤更安全**
+  - 过滤回环、链路本地、组播、未指定地址，以及不适合做局域网发现的 `/31`、`/32` 地址
+  - Windows / Linux / macOS 三平台接口解析都增加了更严格的候选筛选，降低误把 VPN / 虚拟接口当作发现接口的概率
+
+- **GitHub Actions Release 链路加固**
+  - workflow 中使用的第三方 Actions 全部改为 full commit SHA pin
+  - 默认 token 权限收紧为只读，仅发布 job 保留 `contents: write`
+  - `checkout` 关闭持久化凭据，减少构建阶段的 token 暴露面
+  - Release 新增 `SHA256SUMS.txt`，下载后可校验产物完整性
+
+### 修复
+
+- **Android Release 不再允许静默退回 debug signing**
+  - GitHub Actions 现在会强制检查正式签名 secrets，缺失时直接 fail
+  - Android Gradle 在执行 release 任务时，若未配置签名且未显式开启本地调试豁免，会直接阻断构建
+
+### 测试
+
+- Android：
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+  - `flutter test`
+- PC：
+  - `python -m unittest discover -s pc/tests`
+  - `cd pc && python -m unittest discover -s tests`
+  - `python -m py_compile pc/voice_coding.py pc/network_recovery.py pc/platform_utils.py pc/voicing_protocol.py`
+  - 新增三平台接口解析与广播地址计算测试
+
+---
+
 ## [2.7.0] - 2026-04-16
 
 ### 新增

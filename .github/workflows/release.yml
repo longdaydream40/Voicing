@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   prepare-release:
@@ -17,9 +17,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Get version from tag
         id: version
@@ -55,10 +56,15 @@ jobs:
           - macOS 14+（Apple Silicon / arm64，首次打开需右键→打开，并授予 Accessibility 权限）
           - Ubuntu 22.04 GNOME on X11（Wayland 不在支持范围内）
 
+          ### 完整性校验
+
+          - Release 同时提供 `SHA256SUMS.txt`
+          - 下载后可先校验 SHA-256 摘要，再安装或运行产物
+
           EOF
 
       - name: Upload release notes artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-notes
           path: release_notes.md
@@ -69,16 +75,18 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: zulu
           java-version: "17"
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with:
           channel: stable
           flutter-version: 3.27.0
@@ -88,6 +96,25 @@ jobs:
         working-directory: android/voice_coding
         run: flutter pub get
 
+      - name: Verify Android release signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for secret_name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD
+          do
+            if [ -z "${!secret_name}" ]; then
+              echo "Missing required Android release signing secret: $secret_name"
+              exit 1
+            fi
+          done
+
       - name: Prepare Android release signing
         working-directory: android/voice_coding/android
         env:
@@ -96,10 +123,6 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "Android release signing secrets not configured; fallback to debug signing."
-            exit 0
-          fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
           cat > key.properties <<EOF
           storeFile=app/release-keystore.jks
@@ -124,7 +147,7 @@ jobs:
         run: mv android/voice_coding/build/app/outputs/flutter-apk/app-release.apk android/voice_coding/build/app/outputs/flutter-apk/voicing.apk
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: android-apk
           path: android/voice_coding/build/app/outputs/flutter-apk/voicing.apk
@@ -135,10 +158,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
 
@@ -151,6 +176,7 @@ jobs:
         run: |
           python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
+          python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 
       - name: Build EXE with PyInstaller
         working-directory: pc
@@ -161,7 +187,7 @@ jobs:
         run: Copy-Item "pc\dist\Voicing.exe" -Destination "pc\dist\voicing-windows-x64.exe"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: windows-exe
           path: pc/dist/voicing-windows-x64.exe
@@ -172,10 +198,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
 
@@ -188,6 +216,7 @@ jobs:
         run: |
           python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
+          python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 
       - name: Generate macOS icon
         working-directory: pc
@@ -231,7 +260,7 @@ jobs:
           hdiutil create -volname "Voicing" -srcfolder "$APP_PATH" -ov -format UDZO "release/voicing-macos-arm64.dmg"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-dmg
           path: pc/release/voicing-macos-arm64.dmg
@@ -242,10 +271,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
 
@@ -263,6 +294,7 @@ jobs:
         run: |
           python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
           python -m unittest discover -s tests
+          python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 
       - name: Build Linux executable
         working-directory: pc
@@ -272,7 +304,7 @@ jobs:
         run: cp pc/dist/Voicing pc/dist/voicing-linux-x86_64
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-bin
           path: pc/dist/voicing-linux-x86_64
@@ -280,6 +312,8 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - prepare-release
       - build-android
@@ -289,37 +323,46 @@ jobs:
 
     steps:
       - name: Download release notes artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: release-notes
           path: release-assets/release-notes
 
       - name: Download Android artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: android-apk
           path: release-assets/android
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: windows-exe
           path: release-assets/windows
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: macos-dmg
           path: release-assets/macos
 
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: linux-bin
           path: release-assets/linux
 
+      - name: Generate release checksums
+        run: |
+          cd release-assets
+          sha256sum \
+            android/voicing.apk \
+            windows/voicing-windows-x64.exe \
+            macos/voicing-macos-arm64.dmg \
+            linux/voicing-linux-x86_64 > SHA256SUMS.txt
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           name: Voicing ${{ needs.prepare-release.outputs.version }}
           body_path: release-assets/release-notes/release_notes.md
@@ -328,6 +371,7 @@ jobs:
             release-assets/windows/voicing-windows-x64.exe
             release-assets/macos/voicing-macos-arm64.dmg
             release-assets/linux/voicing-linux-x86_64
+            release-assets/SHA256SUMS.txt
           fail_on_unmatched_files: true
           overwrite_files: true
           draft: false

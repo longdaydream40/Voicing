@@ -72,13 +72,18 @@ def get_native_font_family() -> str:
     return "'Ubuntu', 'Cantarell', 'Noto Sans CJK SC', sans-serif"
 
 
-def get_default_hotspot_ip() -> str:
+def get_default_server_ip() -> str:
     platform_name = get_platform()
     if platform_name == "windows":
         return "192.168.137.1"
     if platform_name == "darwin":
         return "192.168.2.1"
     return "10.42.0.1"
+
+
+def get_default_hotspot_ip() -> str:
+    """Backward-compatible alias for the preferred local discovery address."""
+    return get_default_server_ip()
 
 
 def get_preferred_hotspot_prefixes() -> tuple[str, ...]:

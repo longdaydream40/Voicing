@@ -51,6 +51,10 @@ class PlatformUtilsTests(unittest.TestCase):
             ("192.168.137.", "192.168.2.", "10.42.0."),
         )
 
+    def test_get_default_server_ip_windows(self):
+        with patch.object(platform_utils.sys, "platform", "win32"):
+            self.assertEqual(platform_utils.get_default_server_ip(), "192.168.137.1")
+
 
 if __name__ == "__main__":
     unittest.main()

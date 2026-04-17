@@ -3,10 +3,13 @@ import json
 from voicing_protocol import UDP_DISCOVERY_TYPE
 
 
-def refresh_hotspot_ip(previous_ip: str, current_ip: str) -> tuple[str, bool]:
-    """Return the current hotspot IP and whether it changed."""
-    changed = current_ip != previous_ip
-    return current_ip, changed
+def refresh_server_interfaces(
+    previous: list[tuple[str, str]],
+    current: list[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], bool]:
+    """Return the current discovery interfaces and whether the effective set changed."""
+    changed = set(current) != set(previous)
+    return current, changed
 
 
 def build_udp_broadcast_payload(hotspot_ip: str, port: int, hostname: str) -> bytes:

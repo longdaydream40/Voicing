@@ -18,6 +18,7 @@ Android 端应用，通过手机语音输入将文字实时发送到电脑。
 ## 安装
 
 从 [GitHub Releases](https://github.com/kevinlasnh/Voicing/releases/latest) 下载 `voicing.apk`，安装到手机。
+建议同时下载 `SHA256SUMS.txt`，先校验摘要再安装。
 
 或自行编译：
 
@@ -39,6 +40,7 @@ flutter build apk --release
 
 - GitHub Actions 发布环境使用 Java 17，可正常产出 `voicing.apk`
 - 本地如果默认 Java 指向 25，`flutter build apk --release` 会失败；请在 `android/local.properties` 中通过 `org.gradle.java.home` 指向兼容的 JDK 17/21
+- 正式 release 现在必须配置 `key.properties`；若只做本地调试验证，可显式传入 `-Pvoicing.allowDebugReleaseSigning=true` 作为临时豁免，默认不再静默退回 debug signing
 
 ## 技术栈
 

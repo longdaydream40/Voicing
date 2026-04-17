@@ -7,6 +7,7 @@ A system tray application that receives text from phone and types it at cursor p
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -34,13 +35,13 @@ from websockets.server import serve
 from PIL import Image, ImageDraw
 import pyperclip
 
-from network_recovery import build_udp_broadcast_payload, refresh_hotspot_ip
+from network_recovery import build_udp_broadcast_payload, refresh_server_interfaces
 from platform_autostart import is_startup_enabled, set_startup_enabled
 from platform_instance import check_single_instance, show_already_running_message
 from platform_keyboard import paste_from_clipboard, press_enter
 from platform_utils import (
     ensure_runtime_supported,
-    get_default_hotspot_ip,
+    get_default_server_ip,
     get_known_hotspot_prefixes,
     get_log_dir,
     get_native_font_family,
@@ -67,7 +68,7 @@ from voicing_protocol import (
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
 AUTO_ENTER_SETTLE_DELAY_SEC = 0.15
 NATIVE_FONT_FAMILY = get_native_font_family()
@@ -126,8 +127,8 @@ def setup_logging():
 # ============================================================
 # Network Configuration / 网络配置
 # ============================================================
-# Platform hotspot default IP / 平台热点默认 IP
-DEFAULT_HOTSPOT_IP = get_default_hotspot_ip()
+# Platform discovery default IP / 平台默认发现 IP
+DEFAULT_SERVER_IP = get_default_server_ip()
 # UDP broadcast configuration / UDP 广播配置
 UDP_BROADCAST_INTERVAL = 2  # 广播间隔（秒）
 
@@ -149,61 +150,35 @@ def get_hotspot_ip() -> str:
         if all_local_ips:
             return all_local_ips[0]
 
-        return DEFAULT_HOTSPOT_IP
+        return DEFAULT_SERVER_IP
 
     except Exception as e:
         logging.warning(f"Error detecting hotspot IP: {e}")
-        return DEFAULT_HOTSPOT_IP
+        return DEFAULT_SERVER_IP
 
 
 def get_all_local_ips() -> list:
     """Get all local IP addresses / 获取所有本地 IP 地址"""
-    ips = []
+    discovered_ips = [ip for ip, _ in get_all_local_interfaces()]
+    if discovered_ips:
+        return discovered_ips
+
+    fallback_ips = []
     seen = set()
 
-    def add_ip(ip: str) -> None:
-        if ip and not ip.startswith("127.") and ip not in seen:
+    def add_fallback_ip(ip: str) -> None:
+        if _is_discoverable_private_ip(ip, require_private=True) and ip not in seen:
             seen.add(ip)
-            ips.append(ip)
+            fallback_ips.append(ip)
 
     try:
         hostname = socket.gethostname()
-        # Get all addresses associated with hostname
         for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            add_ip(info[4][0])
+            add_fallback_ip(info[4][0])
     except Exception:
         pass
 
-    platform_name = get_platform()
-    ip_discovery_commands = {
-        "windows": [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Get-NetIPAddress -AddressFamily IPv4 | Select-Object -ExpandProperty IPAddress",
-        ],
-        "darwin": ["ifconfig"],
-        "linux": ["ip", "-4", "addr", "show"],
-    }
-    command = ip_discovery_commands.get(platform_name)
-    if command:
-        creationflags = 0
-        if platform_name == "windows":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                creationflags=creationflags,
-                check=False,
-            )
-            for ip in extract_command_ips(platform_name, result.stdout):
-                add_ip(ip)
-        except Exception:
-            pass
-
-    return ips
+    return _sort_ip_addresses(fallback_ips)
 
 
 def extract_command_ips(platform_name: str, command_output: str) -> list[str]:
@@ -229,6 +204,226 @@ def extract_command_ips(platform_name: str, command_output: str) -> list[str]:
     return []
 
 
+def get_all_local_interfaces() -> list[tuple[str, int]]:
+    """Return broadcast-capable private IPv4 interfaces as (ip, prefix_length)."""
+    platform_name = get_platform()
+    interface_discovery_commands = {
+        "windows": [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "Get-NetIPAddress -AddressFamily IPv4 | "
+                "Select-Object IPAddress, PrefixLength, InterfaceAlias, AddressState, SkipAsSource | "
+                "ConvertTo-Json -Compress"
+            ),
+        ],
+        "darwin": ["ifconfig"],
+        "linux": ["ip", "-j", "-4", "addr", "show", "up", "scope", "global"],
+    }
+    command = interface_discovery_commands.get(platform_name)
+    if not command:
+        return []
+
+    creationflags = 0
+    if platform_name == "windows":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            creationflags=creationflags,
+            check=False,
+        )
+    except Exception as exc:
+        logging.debug(f"网络接口探测命令执行失败: {exc}")
+        return []
+
+    if result.returncode != 0 and not result.stdout.strip():
+        logging.debug(f"网络接口探测命令返回非零退出码: {result.returncode}")
+        return []
+
+    return _sort_interfaces(extract_command_interfaces(platform_name, result.stdout))
+
+
+def extract_command_interfaces(platform_name: str, command_output: str) -> list[tuple[str, int]]:
+    command_output = command_output.strip()
+    if not command_output:
+        return []
+
+    interfaces: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+
+    def add_interface(ip: str, prefix_length: int) -> None:
+        try:
+            normalized_prefix = int(prefix_length)
+        except (TypeError, ValueError):
+            return
+        candidate = (ip, normalized_prefix)
+        if candidate in seen:
+            return
+        if not _is_discoverable_private_ip(ip, normalized_prefix):
+            return
+        seen.add(candidate)
+        interfaces.append(candidate)
+
+    if platform_name == "windows":
+        try:
+            records = json.loads(command_output)
+            if isinstance(records, dict):
+                records = [records]
+            if isinstance(records, list):
+                for record in records:
+                    if not isinstance(record, dict):
+                        continue
+                    address_state = record.get("AddressState")
+                    if address_state not in (None, "Preferred", 4):
+                        continue
+                    if record.get("SkipAsSource") is True:
+                        continue
+                    add_interface(record.get("IPAddress", ""), record.get("PrefixLength"))
+                return interfaces
+        except json.JSONDecodeError:
+            pass
+
+        for ip, prefix_length in re.findall(
+            r"(\d{1,3}(?:\.\d{1,3}){3})\s+(\d{1,2})",
+            command_output,
+        ):
+            add_interface(ip, int(prefix_length))
+        return interfaces
+
+    if platform_name == "linux":
+        try:
+            records = json.loads(command_output)
+            if not isinstance(records, list):
+                return []
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                for addr_info in record.get("addr_info", []):
+                    if not isinstance(addr_info, dict):
+                        continue
+                    if addr_info.get("family") != "inet":
+                        continue
+                    if addr_info.get("scope") != "global":
+                        continue
+                    if "broadcast" not in addr_info:
+                        continue
+                    add_interface(addr_info.get("local", ""), addr_info.get("prefixlen"))
+        except json.JSONDecodeError:
+            pass
+        return interfaces
+
+    if platform_name == "darwin":
+        supports_broadcast = False
+        for raw_line in command_output.splitlines():
+            line = raw_line.rstrip()
+            header_match = re.match(r"^([^\s:]+):\s+flags=\d+<([^>]*)>", line)
+            if header_match:
+                flags = {flag.strip().upper() for flag in header_match.group(2).split(",")}
+                supports_broadcast = "UP" in flags and "BROADCAST" in flags and "POINTOPOINT" not in flags
+                continue
+
+            if not supports_broadcast:
+                continue
+
+            match = re.search(
+                r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\s+netmask\s+(0x[0-9a-fA-F]+)\b",
+                line,
+            )
+            if not match:
+                continue
+            prefix_length = bin(int(match.group(2), 16)).count("1")
+            add_interface(match.group(1), prefix_length)
+        return interfaces
+
+    return []
+
+
+def calculate_broadcast_addresses(
+    interfaces: list[tuple[str, int]],
+) -> list[tuple[str, str]]:
+    """Convert interface prefixes to directed broadcast targets."""
+    result = []
+    seen = set()
+    for ip, prefix_length in interfaces:
+        try:
+            network = ipaddress.IPv4Network(f"{ip}/{prefix_length}", strict=False)
+        except ValueError:
+            continue
+        candidate = (ip, str(network.broadcast_address))
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _is_discoverable_private_ip(
+    ip: str,
+    prefix_length: Optional[int] = None,
+    *,
+    require_private: bool = True,
+) -> bool:
+    try:
+        address = ipaddress.IPv4Address(ip)
+    except ipaddress.AddressValueError:
+        return False
+
+    if (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        return False
+
+    if require_private and not address.is_private:
+        return False
+
+    if prefix_length is None:
+        return True
+
+    return 1 <= prefix_length <= 30
+
+
+def _sort_ip_addresses(ips: list[str]) -> list[str]:
+    return sorted(ips, key=_ip_sort_key)
+
+
+def _sort_interfaces(interfaces: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    return sorted(interfaces, key=lambda item: (_ip_sort_key(item[0]), item[1]))
+
+
+def _ip_sort_key(ip: str) -> tuple[int, str]:
+    if any(ip.startswith(prefix) for prefix in get_preferred_hotspot_prefixes()):
+        return (0, ip)
+    if any(ip.startswith(prefix) for prefix in get_known_hotspot_prefixes()):
+        return (1, ip)
+    return (2, ip)
+
+
+def get_primary_server_ip() -> str:
+    if SERVER_INTERFACES:
+        return SERVER_INTERFACES[0][0]
+    return get_hotspot_ip()
+
+
+def log_detected_network_interfaces(interfaces: list[tuple[str, int]]) -> None:
+    if not interfaces:
+        logging.warning("未检测到可用于定向广播的私有 IPv4 接口，将回退到 <broadcast> 全局广播。")
+        logging.info(f"回退广播 IP: {get_hotspot_ip()}")
+        return
+
+    logging.info(f"检测到 {len(interfaces)} 个可广播网络接口:")
+    for ip, prefix_length in interfaces:
+        label = "热点" if any(ip.startswith(prefix) for prefix in get_known_hotspot_prefixes()) else "局域网"
+        logging.info(f"  - {ip}/{prefix_length} ({label})")
+
+
 # ============================================================
 # UDP Broadcast for Auto-Discovery / UDP 广播自动发现
 # ============================================================
@@ -237,7 +432,7 @@ def start_udp_broadcast():
     Start UDP broadcast to let mobile clients discover this server.
     启动 UDP 广播让移动客户端自动发现此服务器。
     """
-    global HOTSPOT_IP
+    global SERVER_INTERFACES
 
     broadcast_socket = None
     try:
@@ -245,30 +440,47 @@ def start_udp_broadcast():
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        logging.info(f"UDP 广播服务已启动，端口: {UDP_BROADCAST_PORT}")
+        logging.info(
+            f"UDP 广播服务已启动，端口: {UDP_BROADCAST_PORT}，活跃接口: {len(SERVER_INTERFACES)} 个"
+        )
 
         while state.running:
             try:
-                current_hotspot_ip, hotspot_ip_changed = refresh_hotspot_ip(
-                    HOTSPOT_IP,
-                    get_hotspot_ip(),
+                current_interfaces = calculate_broadcast_addresses(get_all_local_interfaces())
+                current_interfaces, interfaces_changed = refresh_server_interfaces(
+                    SERVER_INTERFACES,
+                    current_interfaces,
                 )
-                if hotspot_ip_changed:
-                    logging.info(f"热点 IP 更新: {HOTSPOT_IP} -> {current_hotspot_ip}")
-                HOTSPOT_IP = current_hotspot_ip
+                if interfaces_changed:
+                    old_interfaces = ", ".join(f"{ip}->{broadcast}" for ip, broadcast in SERVER_INTERFACES) or "none"
+                    new_interfaces = ", ".join(f"{ip}->{broadcast}" for ip, broadcast in current_interfaces) or "none"
+                    logging.info(f"网络接口更新: {old_interfaces} -> {new_interfaces}")
+                SERVER_INTERFACES = current_interfaces
 
-                # Broadcast message format / 广播消息格式
-                broadcast_data = build_udp_broadcast_payload(
-                    HOTSPOT_IP,
-                    state.ws_port,
-                    socket.gethostname(),
-                )
-
-                broadcast_socket.sendto(
-                    broadcast_data,
-                    ('<broadcast>', UDP_BROADCAST_PORT)
-                )
-                logging.debug(f"发送 UDP 广播: {HOTSPOT_IP}:{state.ws_port}")
+                if current_interfaces:
+                    for server_ip, broadcast_addr in current_interfaces:
+                        broadcast_data = build_udp_broadcast_payload(
+                            server_ip,
+                            state.ws_port,
+                            socket.gethostname(),
+                        )
+                        broadcast_socket.sendto(
+                            broadcast_data,
+                            (broadcast_addr, UDP_BROADCAST_PORT),
+                        )
+                        logging.debug(f"发送 UDP 广播: {server_ip} -> {broadcast_addr}:{UDP_BROADCAST_PORT}")
+                else:
+                    fallback_ip = get_hotspot_ip()
+                    broadcast_data = build_udp_broadcast_payload(
+                        fallback_ip,
+                        state.ws_port,
+                        socket.gethostname(),
+                    )
+                    broadcast_socket.sendto(
+                        broadcast_data,
+                        ("<broadcast>", UDP_BROADCAST_PORT),
+                    )
+                    logging.debug(f"发送 UDP 广播回退: {fallback_ip} -> <broadcast>:{UDP_BROADCAST_PORT}")
             except Exception as e:
                 logging.debug(f"UDP 广播发送失败: {e}")
 
@@ -284,7 +496,7 @@ def start_udp_broadcast():
 
 
 # Will be set at runtime / 运行时设置
-HOTSPOT_IP = DEFAULT_HOTSPOT_IP
+SERVER_INTERFACES: list[tuple[str, str]] = []
 
 
 # ============================================================
@@ -425,7 +637,7 @@ async def start_server():
     """Start the WebSocket server / 启动WebSocket服务器"""
     try:
         async with serve(handle_client, "0.0.0.0", state.ws_port):
-            print(f"WebSocket server started at ws://{HOTSPOT_IP}:{state.ws_port}")
+            print(f"WebSocket server started at ws://{get_primary_server_ip()}:{state.ws_port}")
             # Keep server running
             while state.running:
                 await asyncio.sleep(1)
@@ -957,7 +1169,7 @@ def update_tray_icon_pyqt(tray_icon):
 # ============================================================
 def main():
     """Main entry point / 主入口"""
-    global HOTSPOT_IP
+    global SERVER_INTERFACES
 
     # 初始化日志系统
     setup_logging()
@@ -968,9 +1180,11 @@ def main():
         show_fatal_message("Voicing 无法启动", str(exc))
         return
 
-    # Detect hotspot IP at startup
-    HOTSPOT_IP = get_hotspot_ip()
-    logging.info(f"检测到热点 IP: {HOTSPOT_IP}")
+    # Detect broadcast-capable interfaces at startup
+    discovered_interfaces = get_all_local_interfaces()
+    log_detected_network_interfaces(discovered_interfaces)
+    SERVER_INTERFACES = calculate_broadcast_addresses(discovered_interfaces)
+    logging.info(f"当前首选服务地址: {get_primary_server_ip()}")
 
     # Start WebSocket server in background thread
     ws_thread = threading.Thread(target=run_server, daemon=True)
