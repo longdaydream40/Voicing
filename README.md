@@ -11,7 +11,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-blueviolet)](#)
 [![Version](https://img.shields.io/badge/version-2.7.2-green)](#)
 
-和 AI 对话时打字太慢？Voicing 让你用嘴代替手，自动 Enter，全程不用碰电脑屏幕
+和 AI 对话时打字太慢？Voicing 让你用嘴代替手，自动 Enter，全程不用碰键盘
 
 </div>
 
