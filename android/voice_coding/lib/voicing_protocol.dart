@@ -19,6 +19,7 @@ class VoicingProtocol {
   static const String typePong = 'pong';
   static const String typeSyncState = 'sync_state';
   static const String typeSyncDisabled = 'sync_disabled';
+  static const String qrScanPingSource = 'qr_scan';
   static const String textSendModeSubmit = 'submit';
   static const String textSendModeShadow = 'shadow';
   static const String textSendModeCommit = 'commit';
@@ -53,6 +54,13 @@ class VoicingProtocol {
     return {'type': typePing};
   }
 
+  static Map<String, dynamic> buildQrScanProbeMessage() {
+    return {
+      'type': typePing,
+      'source': qrScanPingSource,
+    };
+  }
+
   static Map<String, dynamic>? decodeMessage(dynamic message) {
     if (message is! String) {
       return null;
@@ -79,7 +87,15 @@ class VoicingProtocol {
       return null;
     }
 
-    return UdpDiscoveryAnnouncement(ip: ip, port: port, name: name);
+    return UdpDiscoveryAnnouncement(
+      ip: ip,
+      port: port,
+      name: name,
+      deviceId: decoded['device_id'] is String
+          ? (decoded['device_id'] as String).trim()
+          : '',
+      os: decoded['os'] is String ? (decoded['os'] as String).trim() : '',
+    );
   }
 }
 
@@ -88,9 +104,13 @@ class UdpDiscoveryAnnouncement {
     required this.ip,
     required this.port,
     required this.name,
+    this.deviceId = '',
+    this.os = '',
   });
 
   final String ip;
   final int port;
   final String name;
+  final String deviceId;
+  final String os;
 }

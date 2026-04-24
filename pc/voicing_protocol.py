@@ -11,6 +11,9 @@ TYPE_ACK = "ack"
 TYPE_PONG = "pong"
 TYPE_SYNC_STATE = "sync_state"
 TYPE_SYNC_DISABLED = "sync_disabled"
+QR_SCAN_PING_SOURCE = "qr_scan"
+QR_PAYLOAD_TYPE = "voicing"
+QR_PAYLOAD_VERSION = 1
 TEXT_SEND_MODE_SUBMIT = "submit"
 TEXT_SEND_MODE_SHADOW = "shadow"
 TEXT_SEND_MODE_COMMIT = "commit"
@@ -29,12 +32,43 @@ SERVER_TO_CLIENT_TYPES = {
 }
 
 
-def build_connected_message(sync_enabled: bool, computer_name: str) -> dict:
+def build_qr_payload(
+    *,
+    device_id: str,
+    ip: str,
+    port: int,
+    name: str,
+    os_name: str,
+    ips: list[str] | None = None,
+) -> dict:
+    payload = {
+        "v": QR_PAYLOAD_VERSION,
+        "type": QR_PAYLOAD_TYPE,
+        "device_id": device_id,
+        "ip": ip,
+        "port": port,
+        "name": name,
+        "os": os_name,
+    }
+    if ips:
+        payload["ips"] = ips
+    return payload
+
+
+def build_connected_message(
+    sync_enabled: bool,
+    computer_name: str,
+    device_id: str = "",
+    os_name: str = "",
+) -> dict:
     return {
         "type": TYPE_CONNECTED,
         "message": "Connected to Voicing server",
         "sync_enabled": sync_enabled,
         "computer_name": computer_name,
+        "device_id": device_id,
+        "name": computer_name,
+        "os": os_name,
     }
 
 

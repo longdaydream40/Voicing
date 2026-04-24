@@ -10,6 +10,10 @@
       "ip",
       "port",
       "name"
+    ],
+    "optional_fields": [
+      "device_id",
+      "os"
     ]
   },
   "messages": {
@@ -29,7 +33,10 @@
         "type",
         "message",
         "sync_enabled",
-        "computer_name"
+        "computer_name",
+        "device_id",
+        "name",
+        "os"
       ],
       "ack": [
         "type",
@@ -50,5 +57,21 @@
         "message"
       ]
     }
+  },
+  "qr_payload": {
+    "required_fields": [
+      "v",
+      "type",
+      "device_id",
+      "ip",
+      "port",
+      "name",
+      "os"
+    ],
+    "optional_fields": [
+      "ips"
+    ],
+    "type": "voicing",
+    "version": 1
   }
 }

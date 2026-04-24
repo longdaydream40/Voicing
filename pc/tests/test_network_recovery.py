@@ -61,13 +61,21 @@ class NetworkRecoveryTests(unittest.TestCase):
         self.assertTrue(changed)
 
     def test_build_udp_broadcast_payload_uses_latest_ip(self):
-        payload = build_udp_broadcast_payload("192.168.137.42", 9527, "DESKTOP-TEST")
+        payload = build_udp_broadcast_payload(
+            "192.168.137.42",
+            9527,
+            "DESKTOP-TEST",
+            "abc123",
+            "windows",
+        )
         data = json.loads(payload.decode("utf-8"))
 
         self.assertEqual(data["type"], "voice_coding_server")
         self.assertEqual(data["ip"], "192.168.137.42")
         self.assertEqual(data["port"], 9527)
         self.assertEqual(data["name"], "DESKTOP-TEST")
+        self.assertEqual(data["device_id"], "abc123")
+        self.assertEqual(data["os"], "windows")
 
 
 if __name__ == "__main__":

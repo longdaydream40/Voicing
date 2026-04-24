@@ -28,8 +28,7 @@ void main() {
 
   test('client message builders match contract', () {
     final messages = contract['messages'] as Map<String, dynamic>;
-    final clientMessages =
-        messages['client_to_server'] as Map<String, dynamic>;
+    final clientMessages = messages['client_to_server'] as Map<String, dynamic>;
 
     expect(
       VoicingProtocol.clientMessageTypes,
@@ -54,12 +53,18 @@ void main() {
       VoicingProtocol.buildPingMessage().keys.toSet(),
       equals((clientMessages['ping'] as List<dynamic>).cast<String>().toSet()),
     );
+    expect(
+      VoicingProtocol.buildQrScanProbeMessage(),
+      {
+        'type': VoicingProtocol.typePing,
+        'source': VoicingProtocol.qrScanPingSource
+      },
+    );
   });
 
   test('server message types match contract', () {
     final messages = contract['messages'] as Map<String, dynamic>;
-    final serverMessages =
-        messages['server_to_client'] as Map<String, dynamic>;
+    final serverMessages = messages['server_to_client'] as Map<String, dynamic>;
 
     expect(
       VoicingProtocol.serverMessageTypes,
@@ -74,6 +79,8 @@ void main() {
         'ip': '192.168.137.1',
         'port': VoicingProtocol.websocketPort,
         'name': 'DESKTOP',
+        'device_id': 'abc123',
+        'os': 'windows',
       }),
     );
 
@@ -81,5 +88,7 @@ void main() {
     expect(parsed!.ip, '192.168.137.1');
     expect(parsed.port, VoicingProtocol.websocketPort);
     expect(parsed.name, 'DESKTOP');
+    expect(parsed.deviceId, 'abc123');
+    expect(parsed.os, 'windows');
   });
 }

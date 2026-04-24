@@ -62,8 +62,9 @@ flutter run
    - `flutter analyze --no-fatal-infos --no-fatal-warnings`
 2. PC 端通过：
    - `python -m unittest discover -s tests`
-   - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py`
+   - `python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py device_identity.py`
 3. 程序能正常启动，手机端能正常连接，文本能正常发送到电脑
+4. 如果改动 Android 原生层（`MainActivity.kt` / Manifest / Gradle），必须完整重新安装 APK 后验证，不能只依赖 Flutter hot restart
 
 ## 发布
 
@@ -74,6 +75,7 @@ flutter run
 - Android release 构建在 CI 中固定使用 Java 17
 - 正式 Release 现在要求配置 Android release signing secrets，缺失时 workflow 会直接失败
 - Release 会附带 `SHA256SUMS.txt`，用于产物完整性校验
+- 发布前需确保 `CHANGELOG.md`、`README.md` 和 `android/README.md` 已同步当前版本能力
 
 ---
 

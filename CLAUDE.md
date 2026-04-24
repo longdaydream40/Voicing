@@ -56,9 +56,9 @@ flutter devices --machine
 
 ---
 
-## 当前状态（2026-04-17）
+## 当前状态（2026-04-24）
 
-- 当前版本：`v2.7.2`
+- 当前版本：`v2.9.0`
 - 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/latest`
 - 最新构建产物：
   - `voicing.apk`
@@ -66,6 +66,10 @@ flutter devices --machine
   - `voicing-macos-arm64.dmg`
   - `voicing-linux-x86_64`
 - PC 端 UDP 发现：按可用私有 IPv4 接口分别发送定向广播，同时覆盖热点和同一路由器局域网
+- PC 端 QR 配对：托盘菜单"显示 Q R 码"，payload 包含 `device_id/ip/ips/port/name/os`
+- Android 端连接：首屏保持状态栏、更多功能操作、输入框；扫码入口只在更多功能操作中
+- Android 端持久化：`saved_server` 记住单台 PC 的 `device_id`、最近成功 IP 和多个候选 IP
+- 网络策略：普通连接优先 UDP，失败后回退保存过的候选 IP；Android native WebSocket 优先绑定物理 WiFi Network
 - Release 安全性：GitHub Actions 已改为 SHA pin，正式 Android Release 强制校验签名 secrets，并附带 `SHA256SUMS.txt`
 
 ## ⚠️ 强制规则
@@ -131,11 +135,14 @@ flutter run
 
 ### PC 端 (Python)
 - **主程序**: `pc/voice_coding.py`
+- **设备身份**: `pc/device_identity.py`
 - **依赖**: `pc/requirements.txt`
 
 ### Android 端 (Flutter)
 - **主程序**: `android/voice_coding/lib/main.dart`
 - **连接状态机**: `android/voice_coding/lib/voicing_connection_controller.dart`
+- **已配对 PC 存储**: `android/voice_coding/lib/saved_server.dart`
+- **WebSocket 封装**: `android/voice_coding/lib/voicing_websocket.dart`
 - **恢复策略**: `android/voice_coding/lib/connection_recovery_policy.dart`
 - **协议常量**: `android/voice_coding/lib/voicing_protocol.dart`
 - **依赖**: `android/voice_coding/pubspec.yaml`
@@ -172,14 +179,18 @@ flutter analyze --no-fatal-infos --no-fatal-warnings
 ```bash
 cd pc
 python -m unittest discover -s tests
-python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py
+python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py device_identity.py
 ```
 
 ---
 
-## 当前协议约束（v2.7.2）
+## 当前协议约束（v2.9.0）
 
 - UDP 发现改为**定向广播**：枚举所有私有 IPv4 接口，按子网分别发送，同时覆盖热点和局域网
+- QR payload 为 JSON：`{v,type,device_id,ip,ips,port,name,os}`，其中 `ips` 是同一台 PC 的候选地址列表
+- Android 保存结构为 `saved_server` JSON：保留单台 PC 的身份和候选 IP，不做多设备路由
+- Android 连接顺序：先 UDP 发现；短暂等待失败后，按 `saved_server.candidateIps` 逐个尝试
+- Android 原生 WebSocket 使用 `ConnectivityManager` + OkHttp 绑定物理 WiFi Network；Manifest 显式允许局域网 `ws://`
 - `TYPE_TEXT` 现在带 `send_mode`
   - `submit`：普通手动发送，可选 `auto_enter`
   - `shadow`：语音分段增量发送，不直接触发 Enter

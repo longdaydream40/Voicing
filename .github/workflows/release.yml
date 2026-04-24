@@ -174,7 +174,7 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py device_identity.py
           python -m unittest discover -s tests
           python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 
@@ -214,7 +214,7 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py device_identity.py
           python -m unittest discover -s tests
           python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 
@@ -292,7 +292,7 @@ jobs:
       - name: Run desktop validation
         working-directory: pc
         run: |
-          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py
+          python -m py_compile voice_coding.py platform_utils.py platform_keyboard.py platform_autostart.py platform_instance.py network_recovery.py voicing_protocol.py device_identity.py
           python -m unittest discover -s tests
           python -c "from voice_coding import calculate_broadcast_addresses, get_all_local_interfaces; interfaces = get_all_local_interfaces(); print('interfaces=', interfaces); print('broadcasts=', calculate_broadcast_addresses(interfaces))"
 

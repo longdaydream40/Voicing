@@ -37,17 +37,20 @@ Get-CimInstance Win32_Process | Where-Object {
     }
 }
 
-# Also stop packaged exe if it is running (best-effort)
-Get-Process -Name "VoiceCoding" -ErrorAction SilentlyContinue | ForEach-Object {
-    try {
-        Stop-Process -Id $_.Id -Force -ErrorAction Stop
-    } catch {
-        Write-Host "Failed to stop VoiceCoding.exe PID $($_.Id): $($_.Exception.Message)"
+# Also stop packaged exe variants if they are running (best-effort)
+@("VoiceCoding", "voicing-windows-x64") | ForEach-Object {
+    $processName = $_
+    Get-Process -Name $processName -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            Stop-Process -Id $_.Id -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Failed to stop $processName PID $($_.Id): $($_.Exception.Message)"
+        }
     }
 }
 
 $pythonCmd = Resolve-PythonCommand
 $arguments = @("`"$entry`"", "--dev")
 
-Start-Process -FilePath $pythonCmd -ArgumentList $arguments -WorkingDirectory $pcDir
+Start-Process -FilePath $pythonCmd -ArgumentList $arguments -WorkingDirectory $pcDir -WindowStyle Hidden
 Write-Host "Restarted dev app: $entry"

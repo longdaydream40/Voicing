@@ -18,7 +18,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 # PyQt5 for modern tray menu
 from PyQt5.QtWidgets import (
@@ -26,20 +26,35 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QGraphicsDropShadowEffect,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QCursor
+from PyQt5.QtCore import (
+    QObject,
+    Qt,
+    QTimer,
+    pyqtSignal,
+    pyqtProperty,
+    QPoint,
+    QPointF,
+    QRect,
+    QEasingCurve,
+    QPropertyAnimation,
+    QParallelAnimationGroup,
+)
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QCursor, QFont, QPen
 
 # Third-party imports
+import qrcode
 import websockets
 from websockets.server import serve
 from PIL import Image, ImageDraw
 import pyperclip
 
+from device_identity import get_or_create_device_identity
 from network_recovery import build_udp_broadcast_payload, refresh_server_interfaces
 from platform_autostart import is_startup_enabled, set_startup_enabled
 from platform_instance import check_single_instance, show_already_running_message
 from platform_keyboard import paste_from_clipboard, press_enter
 from platform_utils import (
+    WINDOWS_HOTSPOT_PREFIXES,
     ensure_runtime_supported,
     get_default_server_ip,
     get_known_hotspot_prefixes,
@@ -51,6 +66,7 @@ from platform_utils import (
     open_file_in_text_editor,
 )
 from voicing_protocol import (
+    QR_SCAN_PING_SOURCE,
     TYPE_PING,
     TYPE_TEXT,
     WEBSOCKET_PORT,
@@ -59,6 +75,7 @@ from voicing_protocol import (
     UDP_BROADCAST_PORT,
     build_ack_message,
     build_connected_message,
+    build_qr_payload,
     build_pong_message,
     build_sync_disabled_message,
     build_sync_state_message,
@@ -68,7 +85,7 @@ from voicing_protocol import (
 # Configuration / 配置
 # ============================================================
 APP_NAME = "Voicing"
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.9.0"
 WS_PORT = WEBSOCKET_PORT      # WebSocket port
 AUTO_ENTER_SETTLE_DELAY_SEC = 0.15
 NATIVE_FONT_FAMILY = get_native_font_family()
@@ -77,6 +94,10 @@ NATIVE_FONT_FAMILY = get_native_font_family()
 # ============================================================
 # Global State / 全局状态
 # ============================================================
+class UiSignals(QObject):
+    qr_scan_succeeded = pyqtSignal(str)
+
+
 class AppState:
     """Application state management / 应用状态管理"""
     def __init__(self):
@@ -91,8 +112,26 @@ class AppState:
         self.log_file = None  # 日志文件路径
         self.lock = threading.Lock()  # 保护共享状态
         self.shutdown_event = threading.Event()  # 用于优雅退出
+        self.qr_dialog = None  # QR 码弹窗（懒加载）
+        self.ui_signals = None  # Qt UI 线程信号桥
+        self.bound_ws_host = None  # 当前 WebSocket 实际绑定地址
 
 state = AppState()
+
+
+def notify_qr_scan_succeeded(reason="unknown"):
+    logging.info(f"QR 扫码连通成功信号: {reason}")
+    signals = state.ui_signals
+    if signals is not None:
+        signals.qr_scan_succeeded.emit(reason)
+    else:
+        logging.warning("QR 扫码连通成功信号未送达：UI signal bridge 尚未初始化")
+
+
+def show_qr_scan_success(reason="unknown"):
+    logging.info(f"准备播放 QR 成功态动画: {reason}")
+    if state.qr_dialog is not None:
+        state.qr_dialog.show_scan_success()
 
 
 # ============================================================
@@ -131,6 +170,13 @@ def setup_logging():
 DEFAULT_SERVER_IP = get_default_server_ip()
 # UDP broadcast configuration / UDP 广播配置
 UDP_BROADCAST_INTERVAL = 2  # 广播间隔（秒）
+
+
+class NetworkInterfaceCandidate(NamedTuple):
+    ip: str
+    prefix_length: int
+    name: str
+    interface_type: str
 
 
 def get_hotspot_ip() -> str:
@@ -181,31 +227,8 @@ def get_all_local_ips() -> list:
     return _sort_ip_addresses(fallback_ips)
 
 
-def extract_command_ips(platform_name: str, command_output: str) -> list[str]:
-    if platform_name == "windows":
-        return [
-            line.strip()
-            for line in command_output.splitlines()
-            if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", line.strip())
-        ]
-
-    if platform_name == "darwin":
-        return [
-            match.group(1)
-            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b", command_output)
-        ]
-
-    if platform_name == "linux":
-        return [
-            match.group(1)
-            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+\b", command_output)
-        ]
-
-    return []
-
-
-def get_all_local_interfaces() -> list[tuple[str, int]]:
-    """Return broadcast-capable private IPv4 interfaces as (ip, prefix_length)."""
+def get_all_network_candidates() -> list[NetworkInterfaceCandidate]:
+    """Return physical-ish private IPv4 interfaces sorted by connection priority."""
     platform_name = get_platform()
     interface_discovery_commands = {
         "windows": [
@@ -245,18 +268,59 @@ def get_all_local_interfaces() -> list[tuple[str, int]]:
         logging.debug(f"网络接口探测命令返回非零退出码: {result.returncode}")
         return []
 
-    return _sort_interfaces(extract_command_interfaces(platform_name, result.stdout))
+    return extract_command_interface_candidates(platform_name, result.stdout)
+
+
+def extract_command_ips(platform_name: str, command_output: str) -> list[str]:
+    if platform_name == "windows":
+        return [
+            line.strip()
+            for line in command_output.splitlines()
+            if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", line.strip())
+        ]
+
+    if platform_name == "darwin":
+        return [
+            match.group(1)
+            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b", command_output)
+        ]
+
+    if platform_name == "linux":
+        return [
+            match.group(1)
+            for match in re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/\d+\b", command_output)
+        ]
+
+    return []
+
+
+def get_all_local_interfaces() -> list[tuple[str, int]]:
+    """Return broadcast-capable private IPv4 interfaces as (ip, prefix_length)."""
+    return [
+        (candidate.ip, candidate.prefix_length)
+        for candidate in get_all_network_candidates()
+    ]
 
 
 def extract_command_interfaces(platform_name: str, command_output: str) -> list[tuple[str, int]]:
+    return [
+        (candidate.ip, candidate.prefix_length)
+        for candidate in extract_command_interface_candidates(platform_name, command_output)
+    ]
+
+
+def extract_command_interface_candidates(
+    platform_name: str,
+    command_output: str,
+) -> list[NetworkInterfaceCandidate]:
     command_output = command_output.strip()
     if not command_output:
         return []
 
-    interfaces: list[tuple[str, int]] = []
+    interfaces: list[NetworkInterfaceCandidate] = []
     seen: set[tuple[str, int]] = set()
 
-    def add_interface(ip: str, prefix_length: int) -> None:
+    def add_interface(ip: str, prefix_length: int, name: str = "") -> None:
         try:
             normalized_prefix = int(prefix_length)
         except (TypeError, ValueError):
@@ -266,8 +330,19 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
             return
         if not _is_discoverable_private_ip(ip, normalized_prefix):
             return
+        normalized_name = str(name or "").strip()
+        if _is_vpn_or_virtual_interface(platform_name, normalized_name):
+            return
+        interface_type = _classify_interface_type(platform_name, normalized_name)
         seen.add(candidate)
-        interfaces.append(candidate)
+        interfaces.append(
+            NetworkInterfaceCandidate(
+                ip=ip,
+                prefix_length=normalized_prefix,
+                name=normalized_name,
+                interface_type=interface_type,
+            )
+        )
 
     if platform_name == "windows":
         try:
@@ -283,8 +358,12 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
                         continue
                     if record.get("SkipAsSource") is True:
                         continue
-                    add_interface(record.get("IPAddress", ""), record.get("PrefixLength"))
-                return interfaces
+                    add_interface(
+                        record.get("IPAddress", ""),
+                        record.get("PrefixLength"),
+                        record.get("InterfaceAlias", ""),
+                    )
+                return _sort_interface_candidates(interfaces)
         except json.JSONDecodeError:
             pass
 
@@ -293,7 +372,7 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
             command_output,
         ):
             add_interface(ip, int(prefix_length))
-        return interfaces
+        return _sort_interface_candidates(interfaces)
 
     if platform_name == "linux":
         try:
@@ -303,6 +382,7 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
             for record in records:
                 if not isinstance(record, dict):
                     continue
+                interface_name = str(record.get("ifname", ""))
                 for addr_info in record.get("addr_info", []):
                     if not isinstance(addr_info, dict):
                         continue
@@ -312,19 +392,30 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
                         continue
                     if "broadcast" not in addr_info:
                         continue
-                    add_interface(addr_info.get("local", ""), addr_info.get("prefixlen"))
+                    add_interface(
+                        addr_info.get("local", ""),
+                        addr_info.get("prefixlen"),
+                        interface_name,
+                    )
         except json.JSONDecodeError:
             pass
-        return interfaces
+        return _sort_interface_candidates(interfaces)
 
     if platform_name == "darwin":
         supports_broadcast = False
+        interface_name = ""
         for raw_line in command_output.splitlines():
             line = raw_line.rstrip()
             header_match = re.match(r"^([^\s:]+):\s+flags=\d+<([^>]*)>", line)
             if header_match:
+                interface_name = header_match.group(1)
                 flags = {flag.strip().upper() for flag in header_match.group(2).split(",")}
-                supports_broadcast = "UP" in flags and "BROADCAST" in flags and "POINTOPOINT" not in flags
+                supports_broadcast = (
+                    "UP" in flags
+                    and "BROADCAST" in flags
+                    and "POINTOPOINT" not in flags
+                    and not _is_vpn_or_virtual_interface(platform_name, interface_name)
+                )
                 continue
 
             if not supports_broadcast:
@@ -337,8 +428,8 @@ def extract_command_interfaces(platform_name: str, command_output: str) -> list[
             if not match:
                 continue
             prefix_length = bin(int(match.group(2), 16)).count("1")
-            add_interface(match.group(1), prefix_length)
-        return interfaces
+            add_interface(match.group(1), prefix_length, interface_name)
+        return _sort_interface_candidates(interfaces)
 
     return []
 
@@ -390,12 +481,99 @@ def _is_discoverable_private_ip(
     return 1 <= prefix_length <= 30
 
 
+def _is_vpn_or_virtual_interface(platform_name: str, interface_name: str) -> bool:
+    normalized = interface_name.lower()
+    if not normalized:
+        return False
+
+    windows_markers = (
+        "tap",
+        "wintun",
+        "wireguard",
+        "pangp",
+        "cisco anyconnect",
+        "openvpn",
+        "hyper-v",
+        "vethernet",
+        "tailscale",
+        "zerotier",
+    )
+    if platform_name == "windows":
+        return any(marker in normalized for marker in windows_markers)
+
+    unix_vpn_prefixes = ("tun", "tap", "utun", "wg", "ppp", "tailscale", "zt")
+    if platform_name in {"linux", "darwin"}:
+        return normalized.startswith(unix_vpn_prefixes)
+
+    return False
+
+
+def _classify_interface_type(platform_name: str, interface_name: str) -> str:
+    normalized = interface_name.lower()
+    if platform_name == "windows":
+        if "ethernet" in normalized or "以太网" in interface_name:
+            return "ethernet"
+        if (
+            "wi-fi" in normalized
+            or "wifi" in normalized
+            or "wlan" in normalized
+            or "wireless" in normalized
+            or "local area connection" in normalized
+        ):
+            return "wifi"
+        return "unknown"
+
+    if platform_name == "linux":
+        if re.match(r"^(eth|en[opsx])", normalized):
+            return "ethernet"
+        if re.match(r"^(wlan|wlp|wlx)", normalized):
+            return "wifi"
+        return "unknown"
+
+    if platform_name == "darwin":
+        if normalized == "en0":
+            return "wifi"
+        if re.match(r"^en\d+$", normalized):
+            return "ethernet"
+        return "unknown"
+
+    return "unknown"
+
+
 def _sort_ip_addresses(ips: list[str]) -> list[str]:
     return sorted(ips, key=_ip_sort_key)
 
 
 def _sort_interfaces(interfaces: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return sorted(interfaces, key=lambda item: (_ip_sort_key(item[0]), item[1]))
+
+
+def _sort_interface_candidates(
+    interfaces: list[NetworkInterfaceCandidate],
+) -> list[NetworkInterfaceCandidate]:
+    priority = {
+        "ethernet": 0,
+        "wifi": 1,
+        "unknown": 2,
+    }
+    return sorted(
+        interfaces,
+        key=lambda item: (
+            _windows_hotspot_rank(item.ip),
+            priority.get(item.interface_type, 3),
+            _ip_sort_key(item.ip),
+            item.prefix_length,
+            item.name.lower(),
+        ),
+    )
+
+
+def _windows_hotspot_rank(ip: str) -> int:
+    if get_platform() == "windows" and any(
+        ip.startswith(prefix) for prefix in WINDOWS_HOTSPOT_PREFIXES
+    ):
+        return 0
+    return 1
 
 
 def _ip_sort_key(ip: str) -> tuple[int, str]:
@@ -412,16 +590,30 @@ def get_primary_server_ip() -> str:
     return get_hotspot_ip()
 
 
-def log_detected_network_interfaces(interfaces: list[tuple[str, int]]) -> None:
+def get_advertised_server_ips() -> list[str]:
+    ips: list[str] = []
+    for ip, _broadcast in SERVER_INTERFACES:
+        if ip not in ips:
+            ips.append(ip)
+    if not ips:
+        fallback_ip = get_hotspot_ip()
+        if fallback_ip:
+            ips.append(fallback_ip)
+    return ips
+
+
+def log_detected_network_interfaces(interfaces: list[NetworkInterfaceCandidate]) -> None:
     if not interfaces:
         logging.warning("未检测到可用于定向广播的私有 IPv4 接口，将回退到 <broadcast> 全局广播。")
         logging.info(f"回退广播 IP: {get_hotspot_ip()}")
         return
 
     logging.info(f"检测到 {len(interfaces)} 个可广播网络接口:")
-    for ip, prefix_length in interfaces:
-        label = "热点" if any(ip.startswith(prefix) for prefix in get_known_hotspot_prefixes()) else "局域网"
-        logging.info(f"  - {ip}/{prefix_length} ({label})")
+    for candidate in interfaces:
+        label = candidate.interface_type
+        if any(candidate.ip.startswith(prefix) for prefix in get_known_hotspot_prefixes()):
+            label = f"{label}/hotspot"
+        logging.info(f"  - {candidate.ip}/{candidate.prefix_length} ({label}; {candidate.name or 'unknown'})")
 
 
 # ============================================================
@@ -457,12 +649,15 @@ def start_udp_broadcast():
                     logging.info(f"网络接口更新: {old_interfaces} -> {new_interfaces}")
                 SERVER_INTERFACES = current_interfaces
 
+                device_identity = get_or_create_device_identity()
                 if current_interfaces:
                     for server_ip, broadcast_addr in current_interfaces:
                         broadcast_data = build_udp_broadcast_payload(
                             server_ip,
                             state.ws_port,
-                            socket.gethostname(),
+                            device_identity.name,
+                            device_identity.device_id,
+                            device_identity.os,
                         )
                         broadcast_socket.sendto(
                             broadcast_data,
@@ -474,7 +669,9 @@ def start_udp_broadcast():
                     broadcast_data = build_udp_broadcast_payload(
                         fallback_ip,
                         state.ws_port,
-                        socket.gethostname(),
+                        device_identity.name,
+                        device_identity.device_id,
+                        device_identity.os,
                     )
                     broadcast_socket.sendto(
                         broadcast_data,
@@ -564,12 +761,14 @@ async def handle_client(websocket):
 
     try:
         # Get computer name for identification
-        computer_name = socket.gethostname()
+        device_identity = get_or_create_device_identity()
 
         # Send welcome message with current sync state and computer name
         await websocket.send(json.dumps(build_connected_message(
             sync_enabled=state.sync_enabled,
-            computer_name=computer_name,
+            computer_name=device_identity.name,
+            device_id=device_identity.device_id,
+            os_name=device_identity.os,
         )))
 
         async for message in websocket:
@@ -601,6 +800,8 @@ async def handle_client(websocket):
                         )))
 
                 elif msg_type == TYPE_PING:
+                    if data.get("source") == QR_SCAN_PING_SOURCE:
+                        notify_qr_scan_succeeded("qr_scan_probe")
                     # Respond with pong and current sync state
                     await websocket.send(json.dumps(build_pong_message(
                         sync_enabled=state.sync_enabled,
@@ -635,14 +836,58 @@ async def broadcast_sync_state():
 
 async def start_server():
     """Start the WebSocket server / 启动WebSocket服务器"""
-    try:
-        async with serve(handle_client, "0.0.0.0", state.ws_port):
-            print(f"WebSocket server started at ws://{get_primary_server_ip()}:{state.ws_port}")
-            # Keep server running
+    while state.running:
+        bind_hosts = get_advertised_server_ips()
+        servers = []
+        bound_hosts = []
+        try:
+            for bind_host in bind_hosts:
+                try:
+                    server = await serve(handle_client, bind_host, state.ws_port)
+                except OSError as e:
+                    logging.error(f"WebSocket 绑定 {bind_host}:{state.ws_port} 失败: {e}")
+                    continue
+                servers.append(server)
+                bound_hosts.append(bind_host)
+                print(f"WebSocket server started at ws://{bind_host}:{state.ws_port}")
+
+            if not servers:
+                logging.error(
+                    "没有可监听的物理网络接口，WebSocket server 暂停重试。"
+                )
+                await asyncio.sleep(2)
+                continue
+
+            state.bound_ws_host = ",".join(bound_hosts)
+            logging.info(
+                "WebSocket server listening on physical interfaces: "
+                f"{', '.join(f'{host}:{state.ws_port}' for host in bound_hosts)}"
+            )
             while state.running:
                 await asyncio.sleep(1)
-    except Exception as e:
-        print(f"Server error: {e}")
+                latest_hosts = get_advertised_server_ips()
+                if set(latest_hosts) != set(bound_hosts):
+                    old_hosts = ", ".join(bound_hosts) or "none"
+                    new_hosts = ", ".join(latest_hosts) or "none"
+                    logging.info(f"WebSocket 监听接口变化: {old_hosts} -> {new_hosts}")
+                    break
+        except Exception as e:
+            print(f"Server error: {e}")
+            logging.error(f"WebSocket server error: {e}")
+            await asyncio.sleep(2)
+        finally:
+            for server in servers:
+                server.close()
+            if servers:
+                logging.info(
+                    "WebSocket server closing listeners: "
+                    f"{', '.join(f'{host}:{state.ws_port}' for host in bound_hosts)}"
+                )
+                await asyncio.gather(
+                    *(server.wait_closed() for server in servers),
+                    return_exceptions=True,
+                )
+            state.bound_ws_host = None
 
 
 def run_server():
@@ -790,6 +1035,7 @@ class ModernMenuWidget(QWidget):
         self.animation_max_steps = 10  # 约 160ms - 更快更流畅
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.update_animation)
+        self._animation_group = None
 
         self.setup_ui()
 
@@ -813,10 +1059,27 @@ class ModernMenuWidget(QWidget):
         container_layout.setContentsMargins(4, 6, 4, 6)  # 内边距
         container_layout.setSpacing(4)  # 项间距（4px 网格）
 
+        # 显示 QR 码（新增：最顶部）
+        self.qr_btn = MenuItemWidget("📱", "显示 QR 码")
+        self.qr_btn.clicked.connect(self.show_qr_dialog)
+        container_layout.addWidget(self.qr_btn)
+
+        # 分隔线（显示 QR 码 与 同步输入 之间）
+        separator_qr = QWidget()
+        separator_qr.setFixedHeight(1)
+        separator_qr.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); margin: 4px 8px;")
+        container_layout.addWidget(separator_qr)
+
         # 同步输入
         self.sync_btn = MenuItemWidget("📡", "同步输入", has_toggle=True, is_checked=True)
         self.sync_btn.clicked.connect(self.toggle_sync)
         container_layout.addWidget(self.sync_btn)
+
+        # 分隔线（同步输入 与 开机自启 之间）
+        separator_sync = QWidget()
+        separator_sync.setFixedHeight(1)
+        separator_sync.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); margin: 4px 8px;")
+        container_layout.addWidget(separator_sync)
 
         # 开机自启
         self.startup_btn = MenuItemWidget("🚀", "开机自启", has_toggle=True, is_checked=False)
@@ -900,7 +1163,42 @@ class ModernMenuWidget(QWidget):
         self.move(x, animation_start_y)
         self.setWindowOpacity(0.0)
         self.show()
-        self.animation_timer.start(16)  # 60fps
+        self._start_open_animation(x, animation_start_y, target_y)
+
+    def _stop_animation_group(self):
+        if self._animation_group is not None:
+            self._animation_group.stop()
+            self._animation_group.deleteLater()
+            self._animation_group = None
+
+    def _start_open_animation(self, x, animation_start_y, target_y):
+        """使用 Qt 原生属性动画，避免 Python QTimer 每帧驱动窗口移动。"""
+        self.animation_timer.stop()
+        self._stop_animation_group()
+
+        pos_anim = QPropertyAnimation(self, b"pos", self)
+        pos_anim.setDuration(160)
+        pos_anim.setStartValue(QPoint(x, animation_start_y))
+        pos_anim.setEndValue(QPoint(x, target_y))
+        pos_anim.setEasingCurve(QEasingCurve.OutQuad)
+
+        opacity_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        opacity_anim.setDuration(120)
+        opacity_anim.setStartValue(0.0)
+        opacity_anim.setEndValue(1.0)
+        opacity_anim.setEasingCurve(QEasingCurve.OutQuad)
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(pos_anim)
+        group.addAnimation(opacity_anim)
+        group.finished.connect(lambda: self._finish_open_animation(target_y))
+        self._animation_group = group
+        group.start()
+
+    def _finish_open_animation(self, target_y):
+        self.move(self.pos().x(), target_y)
+        self.setWindowOpacity(1.0)
+        self._stop_animation_group()
 
     def update_animation(self):
         """更新滑入动画"""
@@ -961,6 +1259,14 @@ class ModernMenuWidget(QWidget):
             log_dir.mkdir(parents=True, exist_ok=True)
             open_file_in_default_app(log_dir)
 
+    def show_qr_dialog(self):
+        """显示 QR 码弹窗"""
+        anchor = QCursor.pos()
+        self.close_with_animation()
+        if not hasattr(state, 'qr_dialog') or state.qr_dialog is None:
+            state.qr_dialog = QRCodeDialog()
+        state.qr_dialog.show_from(anchor)
+
     def quit_app(self):
         """退出应用"""
         state.running = False
@@ -970,6 +1276,7 @@ class ModernMenuWidget(QWidget):
     def close_with_animation(self):
         """关闭动画"""
         self.animation_timer.stop()
+        self._stop_animation_group()
         self.close()
 
     def keyPressEvent(self, event):
@@ -996,6 +1303,602 @@ class ModernMenuWidget(QWidget):
         super().mousePressEvent(event)
 
 
+class QRSuccessOverlay(QWidget):
+    """QR 白底范围上的成功态遮罩与对勾动画。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._shade_progress = 0.0
+        self._check_progress = 0.0
+        self._animation_group = None
+        self.hide()
+
+    def get_shade_progress(self):
+        return self._shade_progress
+
+    def set_shade_progress(self, value):
+        self._shade_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    shadeProgress = pyqtProperty(
+        float,
+        fget=get_shade_progress,
+        fset=set_shade_progress,
+    )
+
+    def get_check_progress(self):
+        return self._check_progress
+
+    def set_check_progress(self, value):
+        self._check_progress = float(value)
+        self.update()
+
+    checkProgress = pyqtProperty(
+        float,
+        fget=get_check_progress,
+        fset=set_check_progress,
+    )
+
+    def reset(self):
+        self._stop_animation()
+        self._shade_progress = 0.0
+        self._check_progress = 0.0
+        self.hide()
+        self.update()
+
+    def play(self):
+        self._stop_animation()
+        self._shade_progress = 0.0
+        self._check_progress = 0.0
+        self.show()
+        self.raise_()
+
+        shade_anim = QPropertyAnimation(self, b"shadeProgress", self)
+        shade_anim.setDuration(180)
+        shade_anim.setStartValue(0.0)
+        shade_anim.setEndValue(1.0)
+        shade_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        check_anim = QPropertyAnimation(self, b"checkProgress", self)
+        check_anim.setDuration(520)
+        check_anim.setStartValue(0.0)
+        check_anim.setEndValue(1.0)
+        check_anim.setEasingCurve(QEasingCurve.OutBack)
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(shade_anim)
+        group.addAnimation(check_anim)
+        self._animation_group = group
+        group.start()
+
+    def _stop_animation(self):
+        if self._animation_group is not None:
+            self._animation_group.stop()
+            self._animation_group.deleteLater()
+            self._animation_group = None
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = self.rect().adjusted(-1, -1, 1, 1)
+        shade_alpha = int(176 * self._shade_progress)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, shade_alpha))
+        painter.drawRoundedRect(rect, 6, 6)
+
+        raw_progress = self._check_progress
+        progress = max(0.0, min(1.0, raw_progress))
+        if progress <= 0:
+            return
+
+        center = QPointF(self.width() / 2, self.height() / 2)
+        scale = 0.72 + 0.28 * progress + max(0.0, raw_progress - 1.0) * 0.34
+        painter.save()
+        painter.translate(center)
+        painter.scale(scale, scale)
+
+        ring_progress = min(1.0, progress / 0.82)
+        ring_alpha = int(125 * (1.0 - ring_progress) * progress)
+        if ring_alpha > 0:
+            ring_pen = QPen(QColor(54, 222, 116, ring_alpha), 3)
+            ring_pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(ring_pen)
+            painter.setBrush(Qt.NoBrush)
+            ring_radius = 25 + 32 * ring_progress
+            painter.drawEllipse(QPointF(0, 0), ring_radius, ring_radius)
+
+        check_alpha = int(255 * min(1.0, progress * 1.4))
+        check_pen = QPen(QColor(54, 222, 116, check_alpha), 10)
+        check_pen.setCapStyle(Qt.RoundCap)
+        check_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(check_pen)
+        painter.setBrush(Qt.NoBrush)
+
+        a = QPointF(-34, -2)
+        b = QPointF(-11, 22)
+        c = QPointF(36, -25)
+        if progress < 0.46:
+            t = progress / 0.46
+            end = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+            painter.drawLine(a, end)
+        else:
+            painter.drawLine(a, b)
+            t = (progress - 0.46) / 0.54
+            end = QPointF(b.x() + (c.x() - b.x()) * t, b.y() + (c.y() - b.y()) * t)
+            painter.drawLine(b, end)
+
+        painter.restore()
+
+
+class QRCodeDialog(QWidget):
+    """QR 码弹窗 - 与托盘菜单同色同风格，从菜单项位置缩放弹到屏幕中心"""
+
+    DIALOG_WIDTH = 282
+    DIALOG_HEIGHT = 308
+    QR_SIZE = 230
+    START_SCALE = 0.12
+    OPEN_DURATION_MS = 430
+    CLOSE_DURATION_MS = 300
+    QT_MAX_WIDGET_SIZE = 16777215
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.Tool
+            | Qt.WindowStaysOnTopHint
+            | Qt.NoDropShadowWindowHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        # 动画状态
+        self._anim_start_rect = None
+        self._anim_end_rect = None
+        self._animation_group = None
+        self._animation_mode = False
+        self._animation_content_rect = QRect()
+        self._animation_pixmap = QPixmap()
+
+        # 5 秒刷新 QR（stub：仅日志，未来接 IP 变化检测）
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._refresh_qr)
+
+        self._cached_qr_payload = None
+        self._cached_qr_pixmap = None
+        self._cached_animation_pixmap = None
+        self._scan_success_shown = False
+        self._closing_after_success = False
+        self._success_generation = 0
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)  # 阴影边距
+        layout.setSpacing(0)
+
+        self.container = QWidget()
+        self.container.setObjectName("qrContainer")
+        self.container.setStyleSheet("""
+            QWidget#qrContainer {
+                background-color: rgba(32, 32, 32, 245);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        cl = QVBoxLayout(self.container)
+        # 左右下三边 10px，上方 padding 6（header 18 + spacing 6 额外占用）
+        cl.setContentsMargins(10, 6, 10, 10)
+        cl.setSpacing(6)
+
+        # 顶栏：标题 + 关闭按钮（高度 24，容纳 14px 字号）
+        header = QWidget()
+        header.setFixedHeight(24)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+
+        title = QLabel("用 Voicing 手机端扫描")
+        title_font = QFont(get_native_font_family())
+        title_font.setPixelSize(14)
+        title_font.setWeight(QFont.Bold)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #FFFFFF; background: transparent;")
+        # 水平 + 垂直 全部居中，避免 QLabel 默认上对齐造成文字偏上
+        title.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+
+        header_layout.addSpacing(24)
+        header_layout.addStretch(1)
+        header_layout.addWidget(title, 0, Qt.AlignVCenter)
+        header_layout.addStretch(1)
+
+        self.close_btn = QLabel("✕")
+        close_font = QFont(get_native_font_family())
+        close_font.setPixelSize(15)
+        close_font.setWeight(QFont.Black)
+        self.close_btn.setFont(close_font)
+        self.close_btn.setFixedSize(24, 24)
+        self.close_btn.setAlignment(Qt.AlignCenter)
+        self.close_btn.setStyleSheet("""
+            QLabel {
+                color: #A0A0A0;
+                background: transparent;
+                border-radius: 12px;
+            }
+            QLabel:hover {
+                color: #FFFFFF;
+                background-color: rgba(255, 255, 255, 25);
+            }
+        """)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        # 用事件过滤器处理点击（QLabel 没有 clicked 信号）
+        self.close_btn.mousePressEvent = lambda e: self.close_with_animation()
+        header_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+
+        cl.addWidget(header)
+
+        # QR 图像
+        self.qr_label = QLabel()
+        self.qr_label.setAlignment(Qt.AlignCenter)
+        self.qr_label.setFixedSize(self.QR_SIZE + 16, self.QR_SIZE + 16)
+        self.qr_label.setStyleSheet(
+            "background-color: #FFFFFF;"
+            "border-radius: 6px;"
+            "padding: 8px;"
+        )
+        self.success_overlay = QRSuccessOverlay(self.qr_label)
+        self.success_overlay.setGeometry(self.qr_label.rect())
+        cl.addWidget(self.qr_label, alignment=Qt.AlignCenter)
+
+        layout.addWidget(self.container)
+
+        # 精确尺寸：真实窗口保持最终尺寸；动画阶段使用快照窗口缩放。
+        self.setFixedSize(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+
+    def _generate_qr_pixmap(self, payload: str) -> QPixmap:
+        """生成 QR pixmap（黑底白点，反相成符合暗色 UI）"""
+        import io
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=8,
+            border=2,
+        )
+        qr.add_data(payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white").convert("RGBA")
+        # 缩放到目标尺寸
+        img = img.resize((self.QR_SIZE, self.QR_SIZE), Image.NEAREST)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        pix = QPixmap()
+        pix.loadFromData(buf.getvalue())
+        return pix
+
+    def _refresh_qr(self):
+        """5s timer：实际只是 stub 日志，IP 文字模拟刷新"""
+        self._populate_content()
+
+    def _build_qr_payload(self):
+        device_identity = get_or_create_device_identity()
+        payload = build_qr_payload(
+            device_id=device_identity.device_id,
+            ip=get_primary_server_ip(),
+            port=state.ws_port,
+            name=device_identity.name,
+            os_name=device_identity.os,
+            ips=get_advertised_server_ips(),
+        )
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _populate_content(self):
+        """填充 QR"""
+        payload = self._build_qr_payload()
+        if self._cached_qr_payload != payload or self._cached_qr_pixmap is None:
+            self._cached_qr_payload = payload
+            self._cached_qr_pixmap = self._generate_qr_pixmap(payload)
+            self._cached_animation_pixmap = None
+        pix = self._cached_qr_pixmap
+        self.qr_label.setPixmap(pix)
+
+    def show_from(self, anchor_global_pos):
+        """弹出动画：从鼠标点击位置缩放 + 位移到屏幕中心（所有平台统一行为）"""
+        self._populate_content()
+        self.success_overlay.reset()
+        self._scan_success_shown = False
+        self._closing_after_success = False
+        self._success_generation += 1
+        self._cached_animation_pixmap = None
+
+        end_rect = self._build_end_rect(anchor_global_pos)
+        start_rect = self._build_start_rect(anchor_global_pos, end_rect)
+
+        self._anim_start_rect = start_rect
+        self._anim_end_rect = end_rect
+        self._refresh_timer.stop()
+        self.setGeometry(end_rect)
+        self.setWindowOpacity(1.0)
+        self.hide()
+        self._start_dialog_animation(start_rect, end_rect, opening=True)
+
+    def _build_end_rect(self, anchor_global_pos):
+        screen = None
+        if hasattr(QApplication, "screenAt"):
+            screen = QApplication.screenAt(anchor_global_pos)
+        if screen is None:
+            screen = QApplication.primaryScreen()
+
+        screen_geo = screen.availableGeometry() if screen else None
+        if screen_geo is None:
+            cx = anchor_global_pos.x()
+            cy = anchor_global_pos.y()
+        else:
+            cx = screen_geo.center().x()
+            cy = screen_geo.center().y()
+
+        return QRect(
+            cx - self.DIALOG_WIDTH // 2,
+            cy - self.DIALOG_HEIGHT // 2,
+            self.DIALOG_WIDTH,
+            self.DIALOG_HEIGHT,
+        )
+
+    def _build_start_rect(self, anchor_global_pos, end_rect):
+        start_w = max(24, int(end_rect.width() * self.START_SCALE))
+        start_h = max(24, int(end_rect.height() * self.START_SCALE))
+        return QRect(
+            anchor_global_pos.x() - start_w // 2,
+            anchor_global_pos.y() - start_h // 2,
+            start_w,
+            start_h,
+        )
+
+    def _capture_animation_pixmap(self):
+        if self._cached_animation_pixmap is None:
+            pixmap = QPixmap(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+            pixmap.fill(Qt.transparent)
+            was_animation_mode = self._animation_mode
+            self._animation_mode = False
+            container_was_hidden = self.container.isHidden()
+            if hasattr(self, "container"):
+                self.container.show()
+            self.resize(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+            self.ensurePolished()
+            if self.layout() is not None:
+                self.layout().activate()
+            self.render(pixmap)
+            self._animation_mode = was_animation_mode
+            if container_was_hidden:
+                self.container.hide()
+            self._cached_animation_pixmap = pixmap
+        return QPixmap(self._cached_animation_pixmap)
+
+    def _capture_current_animation_pixmap(self):
+        pixmap = QPixmap(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+        pixmap.fill(Qt.transparent)
+        was_animation_mode = self._animation_mode
+        self._animation_mode = False
+        container_was_hidden = self.container.isHidden()
+        if hasattr(self, "container"):
+            self.container.show()
+        self.resize(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+        self.ensurePolished()
+        if self.layout() is not None:
+            self.layout().activate()
+        self.render(pixmap)
+        self._animation_mode = was_animation_mode
+        if container_was_hidden:
+            self.container.hide()
+        return pixmap
+
+    def _relative_rect(self, rect, origin):
+        return QRect(
+            rect.x() - origin.x(),
+            rect.y() - origin.y(),
+            rect.width(),
+            rect.height(),
+        )
+
+    def _stop_animation_group(self):
+        if self._animation_group is not None:
+            self._animation_group.stop()
+            self._animation_group.deleteLater()
+            self._animation_group = None
+
+    def get_content_rect(self):
+        return self._animation_content_rect
+
+    def set_content_rect(self, rect):
+        self._animation_content_rect = rect
+        if self._animation_mode:
+            self.update()
+
+    contentRect = pyqtProperty(QRect, fget=get_content_rect, fset=set_content_rect)
+
+    def _allow_animation_geometry(self):
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(self.QT_MAX_WIDGET_SIZE, self.QT_MAX_WIDGET_SIZE)
+
+    def _restore_dialog_geometry(self, rect):
+        self.setFixedSize(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
+        self.setGeometry(rect)
+
+    def _screen_rect_for_content_rect(self):
+        top_left = self.geometry().topLeft()
+        return QRect(
+            top_left.x() + self._animation_content_rect.x(),
+            top_left.y() + self._animation_content_rect.y(),
+            self._animation_content_rect.width(),
+            self._animation_content_rect.height(),
+        )
+
+    def paintEvent(self, event):
+        if not self._animation_mode or self._animation_pixmap.isNull():
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.drawPixmap(self._animation_content_rect, self._animation_pixmap)
+
+    def _start_dialog_animation(self, start_rect, end_rect, opening):
+        """在同一个顶层窗口里绘制弹窗快照，避免两个顶层窗口交接闪烁。"""
+        self._stop_animation_group()
+        canvas_rect = start_rect.united(end_rect).adjusted(-2, -2, 2, 2)
+        canvas_origin = canvas_rect.topLeft()
+        local_start_rect = self._relative_rect(start_rect, canvas_origin)
+        local_end_rect = self._relative_rect(end_rect, canvas_origin)
+
+        animation_pixmap = self._capture_animation_pixmap()
+        self.setUpdatesEnabled(False)
+        self._animation_pixmap = animation_pixmap
+        self._animation_mode = True
+        self._animation_content_rect = local_start_rect
+        self.container.hide()
+        self._allow_animation_geometry()
+        self.setGeometry(canvas_rect)
+        self.setWindowOpacity(0.02 if opening else 1.0)
+        self.setUpdatesEnabled(True)
+        self.show()
+        self.raise_()
+        self.repaint()
+
+        duration = self.OPEN_DURATION_MS if opening else self.CLOSE_DURATION_MS
+
+        rect_anim = QPropertyAnimation(self, b"contentRect", self)
+        rect_anim.setDuration(duration)
+        rect_anim.setStartValue(local_start_rect)
+        rect_anim.setEndValue(local_end_rect)
+        rect_anim.setEasingCurve(QEasingCurve.OutCubic if opening else QEasingCurve.InCubic)
+
+        opacity_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        opacity_anim.setDuration(duration)
+        opacity_anim.setStartValue(0.02 if opening else 1.0)
+        opacity_anim.setEndValue(1.0 if opening else 0.0)
+        opacity_anim.setEasingCurve(QEasingCurve.OutQuad if opening else QEasingCurve.InCubic)
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(rect_anim)
+        group.addAnimation(opacity_anim)
+        if opening:
+            group.finished.connect(lambda: self._finish_open_animation(end_rect))
+        else:
+            group.finished.connect(self._finish_close_animation)
+        self._animation_group = group
+        QTimer.singleShot(0, lambda: group.start())
+
+    def _finish_open_animation(self, end_rect):
+        self.setUpdatesEnabled(False)
+        self._animation_mode = False
+        self._animation_pixmap = QPixmap()
+        self.container.show()
+        self._restore_dialog_geometry(end_rect)
+        self.setWindowOpacity(1.0)
+        self.setUpdatesEnabled(True)
+        self.repaint()
+        self.raise_()
+        self.activateWindow()
+        self._refresh_timer.start(5000)
+        self._stop_animation_group()
+
+    def show_scan_success(self):
+        if not self.isVisible():
+            logging.info("QR 成功态跳过：QR 弹窗当前不可见")
+            return
+        if self._scan_success_shown:
+            logging.info("QR 成功态跳过：已播放")
+            return
+        self._scan_success_shown = True
+        self._closing_after_success = False
+        self._success_generation += 1
+        generation = self._success_generation
+        self._cached_animation_pixmap = None
+        self.success_overlay.setGeometry(self.qr_label.rect())
+        self.success_overlay.play()
+        QTimer.singleShot(1150, lambda: self._close_after_success(generation))
+
+    def _freeze_success_snapshot(self):
+        self.success_overlay.setGeometry(self.qr_label.rect())
+        self.success_overlay.set_shade_progress(1.0)
+        self.success_overlay.set_check_progress(1.0)
+        self.success_overlay.show()
+        self.success_overlay.raise_()
+        self.success_overlay.repaint()
+        self._cached_animation_pixmap = self._capture_current_animation_pixmap()
+
+    def _close_after_success(self, generation):
+        if (
+            generation == self._success_generation
+            and self._scan_success_shown
+            and self.isVisible()
+        ):
+            self._closing_after_success = True
+            self._freeze_success_snapshot()
+            self.close_with_animation()
+
+    def _finish_close_animation(self):
+        self._refresh_timer.stop()
+        self.setUpdatesEnabled(False)
+        self._animation_mode = False
+        self._animation_pixmap = QPixmap()
+        self.container.show()
+        if self._anim_end_rect is not None:
+            self._restore_dialog_geometry(self._anim_end_rect)
+        self.setUpdatesEnabled(True)
+        self.hide()
+        self.success_overlay.reset()
+        self._scan_success_shown = False
+        self._closing_after_success = False
+        self._stop_animation_group()
+
+    def close_with_animation(self):
+        self._stop_animation_group()
+        if not self.isVisible():
+            return
+        if self._anim_start_rect is None or self._anim_end_rect is None:
+            self.hide()
+            return
+        current_rect = (
+            self._screen_rect_for_content_rect()
+            if self._animation_mode
+            else self._anim_end_rect
+        )
+        self.setGeometry(current_rect)
+        self.setWindowOpacity(1.0)
+        self._refresh_timer.stop()
+        if self._scan_success_shown and self._cached_animation_pixmap is None:
+            self._closing_after_success = True
+            self._freeze_success_snapshot()
+        self._start_dialog_animation(current_rect, self._anim_start_rect, opening=False)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close_with_animation()
+        else:
+            super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        """点击外部自动关闭"""
+        # 延迟一帧检查，避免动画刚弹出就被自己 raise 触发关闭
+        QTimer.singleShot(50, self._maybe_close_on_focus_loss)
+        super().focusOutEvent(event)
+
+    def _maybe_close_on_focus_loss(self):
+        if self._animation_mode:
+            return
+        if self._scan_success_shown or self._closing_after_success:
+            logging.info("QR 成功态期间忽略 focus-out 关闭")
+            return
+        if not self.isActiveWindow() and self.isVisible():
+            self.close_with_animation()
+
+    def mousePressEvent(self, event):
+        """点弹窗内空白处不关闭，但点关闭按钮等已在子控件处理"""
+        super().mousePressEvent(event)
+
+
 class ModernTrayIcon(QSystemTrayIcon):
     """现代托盘图标"""
 
@@ -1010,6 +1913,13 @@ class ModernTrayIcon(QSystemTrayIcon):
         self.menu_widget.move(-10000, -10000)
         self.menu_widget.show()
         QTimer.singleShot(50, self.menu_widget.hide)
+        # 预热 QR 弹窗与 QR pixmap，避免首次点击时同步生成图片和计算布局
+        if state.qr_dialog is None:
+            state.qr_dialog = QRCodeDialog()
+            state.qr_dialog._populate_content()
+            state.qr_dialog.move(-10000, -10000)
+            state.qr_dialog.show()
+            QTimer.singleShot(50, state.qr_dialog.hide)
         self.setup_icon()
         self.setup_menu()
         # 设置悬停提示
@@ -1154,6 +2064,13 @@ def run_tray():
     if not QSystemTrayIcon.isSystemTrayAvailable():
         raise RuntimeError("当前桌面环境不提供系统托盘，Voicing 无法继续运行。")
 
+    if state.ui_signals is None:
+        state.ui_signals = UiSignals()
+    state.ui_signals.qr_scan_succeeded.connect(
+        show_qr_scan_success,
+        type=Qt.QueuedConnection,
+    )
+
     # 创建现代托盘图标
     tray_icon = ModernTrayIcon()
     tray_icon.show()
@@ -1202,9 +2119,11 @@ def main():
         return
 
     # Detect broadcast-capable interfaces at startup
-    discovered_interfaces = get_all_local_interfaces()
+    discovered_interfaces = get_all_network_candidates()
     log_detected_network_interfaces(discovered_interfaces)
-    SERVER_INTERFACES = calculate_broadcast_addresses(discovered_interfaces)
+    SERVER_INTERFACES = calculate_broadcast_addresses(
+        [(candidate.ip, candidate.prefix_length) for candidate in discovered_interfaces]
+    )
     logging.info(f"当前首选服务地址: {get_primary_server_ip()}")
 
     # Start WebSocket server in background thread

@@ -12,11 +12,22 @@ def refresh_server_interfaces(
     return current, changed
 
 
-def build_udp_broadcast_payload(hotspot_ip: str, port: int, hostname: str) -> bytes:
+def build_udp_broadcast_payload(
+    hotspot_ip: str,
+    port: int,
+    hostname: str,
+    device_id: str = "",
+    os_name: str = "",
+) -> bytes:
     """Build the UDP discovery payload with the latest hotspot address."""
-    return json.dumps({
+    payload = {
         "type": UDP_DISCOVERY_TYPE,
         "ip": hotspot_ip,
         "port": port,
         "name": hostname,
-    }).encode("utf-8")
+    }
+    if device_id:
+        payload["device_id"] = device_id
+    if os_name:
+        payload["os"] = os_name
+    return json.dumps(payload).encode("utf-8")

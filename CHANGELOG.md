@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-04-24
+
+### 新增
+
+- **QR 扫码连接**
+  - PC 托盘菜单新增“显示 Q R 码”，二维码包含 `device_id/ip/ips/port/name/os`
+  - Android 更多功能菜单新增“扫码连接”，输入区切换为相机预览和四角扫描框
+  - 扫码后先做 WebSocket 连通性 probe，成功才保存设备并正式重连
+
+- **单设备持久化**
+  - Android 新增 `saved_server` JSON 存储，保存 PC 身份、最近成功地址、候选地址列表、端口、名称、系统和最近连接时间
+  - 旧 `manual_server_ip` / `manual_server_port` 自动迁移到 `saved_server`
+  - App 启动和手动刷新时优先等待 UDP 广播，失败后回退保存过的 PC 地址候选
+  - 同一台 PC 的热点 IP、局域网 IP 可同时保存，网络切换后会逐个候选重连
+  - 扫到不同 `device_id` 时会要求确认替换
+
+- **公司网络 / VPN 场景支持**
+  - PC 端过滤 VPN 和虚拟网卡，QR 优先展示物理热点/以太网/WiFi 地址，并携带全部可达候选
+  - PC WebSocket server 监听全部可广播物理地址，网络变化后自动刷新监听地址
+  - Android 端新增 WiFi-bound 原生 WebSocket 通道，通过 `ConnectivityManager` + OkHttp 让普通连接优先走物理 WiFi Network
+  - Android Manifest 显式允许局域网明文 `ws://`，匹配当前 PC 端 WebSocket 协议
+
+### 改进
+
+- Android 首屏保持原有状态栏、更多功能操作和输入框；扫码入口只保留在“更多功能操作”中
+- “刷新连接”会真实重连，已连接状态下不会被旧 WebSocket 回调闪回“未连接”
+- QR 扫码失败提示细分为非 Voicing QR、版本不兼容、二维码损坏
+- 相机权限拒绝时显示设置引导，并保留手动 IP fallback
+- PC QR 弹窗加入扫码成功绿色对勾反馈，并避免普通自动重连误触发成功态
+  - PC QR 弹窗动画改为单顶层窗口绘制，减少 Windows/Qt compositor 下的随机闪屏
+
+### 测试
+
+- Android:
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+  - `flutter test`
+  - `flutter build apk --debug`
+- PC:
+  - `python -m py_compile pc/voice_coding.py pc/voicing_protocol.py pc/device_identity.py pc/network_recovery.py`
+  - `python -m unittest discover -s pc/tests`
+  - 真机验证：PC 热点、学校局域网、扫码保存、多 IP 候选 fallback 已闭环
+
+---
+
 ## [2.7.3] - 2026-04-23
 
 ### 修复

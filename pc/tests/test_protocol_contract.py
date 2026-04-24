@@ -8,6 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from voicing_protocol import (
     CLIENT_TO_SERVER_TYPES,
     DEFAULT_SERVER_IP,
+    QR_SCAN_PING_SOURCE,
+    QR_PAYLOAD_TYPE,
+    QR_PAYLOAD_VERSION,
     SERVER_TO_CLIENT_TYPES,
     TEXT_SEND_MODE_SHADOW,
     TEXT_SEND_MODE_SUBMIT,
@@ -18,6 +21,7 @@ from voicing_protocol import (
     build_connected_message,
     build_ping_message,
     build_pong_message,
+    build_qr_payload,
     build_sync_disabled_message,
     build_sync_state_message,
     build_text_message,
@@ -51,6 +55,7 @@ class ProtocolContractTests(unittest.TestCase):
 
         self.assertEqual(set(text_message.keys()), set(client_messages["text"]))
         self.assertEqual(set(ping_message.keys()), set(client_messages["ping"]))
+        self.assertEqual(QR_SCAN_PING_SOURCE, "qr_scan")
         self.assertEqual(text_message["send_mode"], TEXT_SEND_MODE_SUBMIT)
         self.assertEqual(
             build_text_message("shadow", send_mode=TEXT_SEND_MODE_SHADOW)["send_mode"],
@@ -62,7 +67,12 @@ class ProtocolContractTests(unittest.TestCase):
         self.assertEqual(set(SERVER_TO_CLIENT_TYPES), set(server_messages.keys()))
 
         samples = {
-            "connected": build_connected_message(sync_enabled=True, computer_name="DESKTOP"),
+            "connected": build_connected_message(
+                sync_enabled=True,
+                computer_name="DESKTOP",
+                device_id="abc123def4567890",
+                os_name="windows",
+            ),
             "ack": build_ack_message(),
             "pong": build_pong_message(sync_enabled=True),
             "sync_state": build_sync_state_message(sync_enabled=False),
@@ -75,6 +85,26 @@ class ProtocolContractTests(unittest.TestCase):
 
         self.assertTrue(build_ack_message()["clear_input"])
         self.assertFalse(build_ack_message(clear_input=False)["clear_input"])
+
+    def test_qr_payload_builder_matches_contract(self):
+        qr_contract = self.contract["qr_payload"]
+        payload = build_qr_payload(
+            device_id="abc123def4567890",
+            ip="192.168.137.1",
+            port=WEBSOCKET_PORT,
+            name="DESKTOP",
+            os_name="windows",
+            ips=["192.168.137.1", "10.16.177.83"],
+        )
+
+        self.assertEqual(
+            set(payload.keys()),
+            set(qr_contract["required_fields"]) | set(qr_contract["optional_fields"]),
+        )
+        self.assertEqual(payload["v"], QR_PAYLOAD_VERSION)
+        self.assertEqual(payload["type"], QR_PAYLOAD_TYPE)
+        self.assertEqual(payload["device_id"], "abc123def4567890")
+        self.assertEqual(payload["ips"], ["192.168.137.1", "10.16.177.83"])
 
 
 if __name__ == "__main__":
