@@ -58,18 +58,19 @@ flutter devices --machine
 
 ## 当前状态（2026-04-24）
 
-- 当前版本：`v2.9.0`
+- 当前版本：`v2.9.1`
 - 最新 Release：`https://github.com/kevinlasnh/Voicing/releases/latest`
 - 最新构建产物：
   - `voicing.apk`
   - `voicing-windows-x64.exe`
   - `voicing-macos-arm64.dmg`
   - `voicing-linux-x86_64`
-- PC 端 UDP 发现：按可用私有 IPv4 接口分别发送定向广播，同时覆盖热点和同一路由器局域网
-- PC 端 QR 配对：托盘菜单"显示 Q R 码"，payload 包含 `device_id/ip/ips/port/name/os`
+- PC 端 QR 配对：托盘菜单"显示 QR 码"，payload 包含 `device_id/ip/ips/port/name/os`
+- PC 端 UDP 广播：`v2.9.1` 起不再启动运行时 UDP 广播线程，物理网卡枚举仅用于 QR payload 的主 IP 和候选 IP
 - Android 端连接：首屏保持状态栏、更多功能操作、输入框；扫码入口只在更多功能操作中
 - Android 端持久化：`saved_server` 记住单台 PC 的 `device_id`、最近成功 IP 和多个候选 IP
-- 网络策略：普通连接优先 UDP，失败后回退保存过的候选 IP；Android native WebSocket 优先绑定物理 WiFi Network
+- 网络策略：启动、恢复前台和手动刷新时直接按 `saved_server.candidateIps` 尝试已保存设备；Android native WebSocket 优先绑定物理 WiFi Network
+- Android UI：原生 `WindowInsetsAnimationCompat` 逐帧键盘高度通过 EventChannel 驱动输入区高度；改原生层后必须完整重装 APK
 - Release 安全性：GitHub Actions 已改为 SHA pin，正式 Android Release 强制校验签名 secrets，并附带 `SHA256SUMS.txt`
 
 ## ⚠️ 强制规则
@@ -184,12 +185,12 @@ python -m py_compile voice_coding.py network_recovery.py voicing_protocol.py dev
 
 ---
 
-## 当前协议约束（v2.9.0）
+## 当前协议约束（v2.9.1）
 
-- UDP 发现改为**定向广播**：枚举所有私有 IPv4 接口，按子网分别发送，同时覆盖热点和局域网
 - QR payload 为 JSON：`{v,type,device_id,ip,ips,port,name,os}`，其中 `ips` 是同一台 PC 的候选地址列表
 - Android 保存结构为 `saved_server` JSON：保留单台 PC 的身份和候选 IP，不做多设备路由
-- Android 连接顺序：先 UDP 发现；短暂等待失败后，按 `saved_server.candidateIps` 逐个尝试
+- Android 连接顺序：不再依赖 UDP 发现；启动、恢复前台和手动刷新时按 `saved_server.candidateIps` 逐个尝试
+- 没有保存设备时保持未连接；用户通过更多功能菜单的"扫码连接"完成首次配对
 - Android 原生 WebSocket 使用 `ConnectivityManager` + OkHttp 绑定物理 WiFi Network；Manifest 显式允许局域网 `ws://`
 - `TYPE_TEXT` 现在带 `send_mode`
   - `submit`：普通手动发送，可选 `auto_enter`

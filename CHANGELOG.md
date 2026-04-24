@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 文档
+
+- 同步 README、Android README 和项目开发规范到 v2.9.1 QR-only 连接策略
+- 统一文档中的“QR 码”写法，移除字母间错误空格
+
+---
+
 ## [2.9.1] - 2026-04-24
 
 ### 修复
@@ -47,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 新增
 
 - **QR 扫码连接**
-  - PC 托盘菜单新增“显示 Q R 码”，二维码包含 `device_id/ip/ips/port/name/os`
+  - PC 托盘菜单新增“显示 QR 码”，二维码包含 `device_id/ip/ips/port/name/os`
   - Android 更多功能菜单新增“扫码连接”，输入区切换为相机预览和四角扫描框
   - 扫码后先做 WebSocket 连通性 probe，成功才保存设备并正式重连
 
