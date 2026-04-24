@@ -363,7 +363,7 @@ def extract_command_interface_candidates(
                         record.get("PrefixLength"),
                         record.get("InterfaceAlias", ""),
                     )
-                return _sort_interface_candidates(interfaces)
+                return _sort_interface_candidates(interfaces, platform_name)
         except json.JSONDecodeError:
             pass
 
@@ -372,7 +372,7 @@ def extract_command_interface_candidates(
             command_output,
         ):
             add_interface(ip, int(prefix_length))
-        return _sort_interface_candidates(interfaces)
+        return _sort_interface_candidates(interfaces, platform_name)
 
     if platform_name == "linux":
         try:
@@ -399,7 +399,7 @@ def extract_command_interface_candidates(
                     )
         except json.JSONDecodeError:
             pass
-        return _sort_interface_candidates(interfaces)
+        return _sort_interface_candidates(interfaces, platform_name)
 
     if platform_name == "darwin":
         supports_broadcast = False
@@ -429,7 +429,7 @@ def extract_command_interface_candidates(
                 continue
             prefix_length = bin(int(match.group(2), 16)).count("1")
             add_interface(match.group(1), prefix_length, interface_name)
-        return _sort_interface_candidates(interfaces)
+        return _sort_interface_candidates(interfaces, platform_name)
 
     return []
 
@@ -550,6 +550,7 @@ def _sort_interfaces(interfaces: list[tuple[str, int]]) -> list[tuple[str, int]]
 
 def _sort_interface_candidates(
     interfaces: list[NetworkInterfaceCandidate],
+    platform_name: str,
 ) -> list[NetworkInterfaceCandidate]:
     priority = {
         "ethernet": 0,
@@ -559,7 +560,7 @@ def _sort_interface_candidates(
     return sorted(
         interfaces,
         key=lambda item: (
-            _windows_hotspot_rank(item.ip),
+            _windows_hotspot_rank(platform_name, item.ip),
             priority.get(item.interface_type, 3),
             _ip_sort_key(item.ip),
             item.prefix_length,
@@ -568,8 +569,8 @@ def _sort_interface_candidates(
     )
 
 
-def _windows_hotspot_rank(ip: str) -> int:
-    if get_platform() == "windows" and any(
+def _windows_hotspot_rank(platform_name: str, ip: str) -> int:
+    if platform_name == "windows" and any(
         ip.startswith(prefix) for prefix in WINDOWS_HOTSPOT_PREFIXES
     ):
         return 0
