@@ -22,8 +22,6 @@ class VoicingConnectionController extends ChangeNotifier {
   static const Duration _qrSuccessHoldDelay = Duration(milliseconds: 1100);
   static const Duration _qrFailureHoldDelay = Duration(milliseconds: 1700);
   static const Duration _qrProbeTimeout = Duration(seconds: 3);
-  static const Duration _savedServerFallbackDelay =
-      Duration(milliseconds: 2500);
   static const Duration _savedCandidateConnectTimeout = Duration(seconds: 2);
   static const int _maxSentTextHistory = 20;
 
@@ -68,17 +66,13 @@ class VoicingConnectionController extends ChangeNotifier {
   final bool _shadowModeEnabled = true;
   int _lastSentLength = 0;
   bool _wasComposing = false;
-  RawDatagramSocket? _udpSocket;
-  StreamSubscription<RawSocketEvent>? _udpSubscription;
   Timer? _heartbeatTimer;
   DateTime? _lastPong;
   int _reconnectAttempt = 0;
   int _connectionGeneration = 0;
-  DateTime? _lastConnectStartedAt;
   DateTime? _foregroundRecoveryUntil;
   Timer? _foregroundRecoveryTimer;
   Timer? _shadowFinalizeTimer;
-  Timer? _savedServerFallbackTimer;
   bool _displayConnectedDuringForegroundRecovery = false;
   SavedServer? _savedServer;
   bool _manualMode = false;
@@ -503,8 +497,7 @@ class VoicingConnectionController extends ChangeNotifier {
   Future<void> initialize() async {
     await _loadAutoEnterPreference();
     await _loadSavedServerPreference();
-    await _restartUdpDiscovery(reason: 'init');
-    _connectViaUdpFirst(reason: 'init');
+    _connectToSavedServerOrStayDisconnected(reason: 'init');
   }
 
   Future<void> handleLifecycleState(AppLifecycleState state) async {
@@ -513,18 +506,16 @@ class VoicingConnectionController extends ChangeNotifier {
     } else if (state == AppLifecycleState.resumed &&
         _recoveryPolicy.shouldForceReconnectOnResume()) {
       _beginForegroundRecovery();
-      await _restartUdpDiscovery(reason: 'app resumed');
-      _connectViaUdpFirst(reason: 'app resumed');
+      _connectToSavedServerOrStayDisconnected(reason: 'app resumed');
     }
   }
 
   void refreshConnection() {
-    unawaited(_restartUdpDiscovery(reason: 'manual refresh'));
     if (_status == ConnectionStatus.connected) {
       _forceReconnect(resetBackoff: true, reason: 'manual refresh connected');
       return;
     }
-    _connectViaUdpFirst(reason: 'manual refresh');
+    _connectToSavedServerOrStayDisconnected(reason: 'manual refresh');
   }
 
   Future<void> setManualServer({
@@ -560,9 +551,8 @@ class VoicingConnectionController extends ChangeNotifier {
     _manualMode = false;
     _clearSavedCandidateAttempts();
     await _savedServerStore.clear();
-    await _restartUdpDiscovery(reason: 'manual server cleared');
+    _disconnectAndStayDisconnected();
     notifyListeners();
-    _forceReconnect(resetBackoff: true, reason: 'manual server cleared');
   }
 
   void recallLastText() {
@@ -623,15 +613,10 @@ class VoicingConnectionController extends ChangeNotifier {
     _heartbeatTimer?.cancel();
     _foregroundRecoveryTimer?.cancel();
     _shadowFinalizeTimer?.cancel();
-    _savedServerFallbackTimer?.cancel();
     textController.removeListener(_onTextControllerChanged);
     _connectionGeneration++;
     _channel?.sink.close();
     textController.dispose();
-    _udpSubscription?.cancel();
-    _udpSubscription = null;
-    _udpSocket?.close();
-    _udpSocket = null;
     super.dispose();
   }
 
@@ -640,8 +625,6 @@ class VoicingConnectionController extends ChangeNotifier {
     String reason = '',
     Duration? connectTimeout,
   }) {
-    _savedServerFallbackTimer?.cancel();
-    _savedServerFallbackTimer = null;
     if (resetBackoff) {
       _reconnectAttempt = 0;
     }
@@ -653,9 +636,7 @@ class VoicingConnectionController extends ChangeNotifier {
     _connect(connectTimeout: connectTimeout);
   }
 
-  void _connectViaUdpFirst({required String reason}) {
-    _savedServerFallbackTimer?.cancel();
-    _savedServerFallbackTimer = null;
+  void _connectToSavedServerOrStayDisconnected({required String reason}) {
     _clearSavedCandidateAttempts();
     _reconnectTimer?.cancel();
     _connectionGeneration++;
@@ -664,33 +645,29 @@ class VoicingConnectionController extends ChangeNotifier {
     _lastPong = null;
 
     final saved = _savedServer;
-    _setStatus(ConnectionStatus.connecting);
     if (_manualMode && saved != null) {
-      AppLogger.info(
-        '优先等待 UDP 发现，${_savedServerFallbackDelay.inMilliseconds}ms 后回退保存地址: $reason',
+      _setStatus(ConnectionStatus.connecting);
+      _startSavedCandidateAttempts(
+        saved,
+        saved.candidateIps,
+        reason: 'saved QR device reconnect: $reason',
       );
-      _savedServerFallbackTimer = Timer(_savedServerFallbackDelay, () {
-        final latestSaved = _savedServer;
-        if (!_manualMode ||
-            latestSaved == null ||
-            _status == ConnectionStatus.connected) {
-          return;
-        }
-        _startSavedCandidateAttempts(
-          latestSaved,
-          latestSaved.candidateIps,
-          reason: 'saved server fallback after UDP',
-        );
-      });
       return;
     }
 
-    AppLogger.info('未保存服务器，等待 UDP 发现: $reason');
-    _savedServerFallbackTimer = Timer(_savedServerFallbackDelay, () {
-      if (_status == ConnectionStatus.connecting) {
-        _setStatus(ConnectionStatus.disconnected);
-      }
-    });
+    AppLogger.info('未保存二维码设备，不进行 UDP 自动发现: $reason');
+    _setStatus(ConnectionStatus.disconnected);
+  }
+
+  void _disconnectAndStayDisconnected() {
+    _clearSavedCandidateAttempts();
+    _reconnectTimer?.cancel();
+    _connectionGeneration++;
+    _stopHeartbeat();
+    _channel?.sink.close();
+    _lastPong = null;
+    _syncEnabled = true;
+    _setStatus(ConnectionStatus.disconnected);
   }
 
   int _connect({
@@ -699,7 +676,6 @@ class VoicingConnectionController extends ChangeNotifier {
   }) {
     final int connectionId = ++_connectionGeneration;
     final bool foregroundRecoveryActive = _isForegroundRecoveryActive();
-    _lastConnectStartedAt = DateTime.now();
     _setStatus(ConnectionStatus.connecting);
 
     _reconnectTimer?.cancel();
@@ -810,6 +786,14 @@ class VoicingConnectionController extends ChangeNotifier {
     _syncEnabled = true;
     notifyListeners();
 
+    final saved = _savedServer;
+    if (!_manualMode || saved == null) {
+      _clearSavedCandidateAttempts();
+      _reconnectTimer?.cancel();
+      AppLogger.info('无已保存二维码设备，断开后不自动重连');
+      return;
+    }
+
     final reconnectDelay = _recoveryPolicy.reconnectDelay(
       reconnectAttempt: _reconnectAttempt,
       foregroundRecoveryActive: foregroundRecoveryActive,
@@ -820,10 +804,18 @@ class VoicingConnectionController extends ChangeNotifier {
     _reconnectTimer = Timer(
       reconnectDelay,
       () {
-        if (_status == ConnectionStatus.disconnected) {
-          _connect();
-        } else if (_status == ConnectionStatus.connecting) {
-          _connect();
+        if (_status == ConnectionStatus.disconnected ||
+            _status == ConnectionStatus.connecting) {
+          final latestSaved = _savedServer;
+          if (_manualMode && latestSaved != null) {
+            _startSavedCandidateAttempts(
+              latestSaved,
+              latestSaved.candidateIps,
+              reason: 'saved QR device reconnect after disconnect',
+            );
+          } else {
+            _setStatus(ConnectionStatus.disconnected);
+          }
         }
       },
     );
@@ -968,182 +960,6 @@ class VoicingConnectionController extends ChangeNotifier {
       AppLogger.warning('Ping 发送失败', error: error, stackTrace: stackTrace);
       _handleDisconnect();
     }
-  }
-
-  Future<void> _startUdpDiscovery() async {
-    try {
-      _udpSocket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        VoicingProtocol.udpBroadcastPort,
-      );
-      _udpSocket!.broadcastEnabled = true;
-      _udpSocket!.multicastLoopback = true;
-      AppLogger.info('UDP 发现监听已启动，端口: ${VoicingProtocol.udpBroadcastPort}');
-
-      _udpSubscription = _udpSocket!.listen((RawSocketEvent event) {
-        if (event != RawSocketEvent.read) {
-          return;
-        }
-
-        final datagram = _udpSocket!.receive();
-        if (datagram == null) {
-          return;
-        }
-
-        final message = utf8.decode(datagram.data);
-        _handleUdpDiscovery(message, datagram.address.address);
-      });
-    } catch (error, stackTrace) {
-      AppLogger.warning(
-        'UDP 发现启动失败',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<void> _restartUdpDiscovery({String reason = ''}) async {
-    await _stopUdpDiscovery();
-    await _startUdpDiscovery();
-    if (reason.isNotEmpty) {
-      AppLogger.info('UDP 发现监听已重建: $reason');
-    }
-  }
-
-  Future<void> _stopUdpDiscovery() async {
-    await _udpSubscription?.cancel();
-    _udpSubscription = null;
-    _udpSocket?.close();
-    _udpSocket = null;
-  }
-
-  void _handleUdpDiscovery(String message, String sourceIp) {
-    try {
-      final announcement = VoicingProtocol.parseUdpDiscoveryMessage(message);
-      if (announcement == null) {
-        return;
-      }
-      if (_manualMode) {
-        _handleSavedServerUdpDiscovery(announcement, sourceIp);
-        return;
-      }
-
-      final now = DateTime.now();
-      final bool foregroundRecoveryActive =
-          _isForegroundRecoveryActive(now: now);
-      final bool serverChanged =
-          _serverIp != announcement.ip || _serverPort != announcement.port;
-      final bool shouldReconnectFromBroadcast =
-          _recoveryPolicy.shouldReconnectFromUdp(
-        serverChanged: serverChanged,
-        foregroundRecoveryActive: foregroundRecoveryActive,
-        status: _status,
-        lastConnectStartedAt: _lastConnectStartedAt,
-        now: now,
-      );
-
-      if (serverChanged) {
-        AppLogger.info(
-          'UDP 发现服务器: ${announcement.ip}:${announcement.port} (来源: $sourceIp)',
-        );
-        _serverIp = announcement.ip;
-        _serverPort = announcement.port;
-        notifyListeners();
-      }
-
-      if (shouldReconnectFromBroadcast) {
-        _savedServerFallbackTimer?.cancel();
-        _savedServerFallbackTimer = null;
-        _reconnectTimer?.cancel();
-        _forceReconnect(
-          resetBackoff: true,
-          reason: serverChanged ? 'udp server update' : 'udp recovery probe',
-        );
-      }
-    } catch (error, stackTrace) {
-      AppLogger.warning(
-        'UDP 消息解析失败',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  void _handleSavedServerUdpDiscovery(
-    UdpDiscoveryAnnouncement announcement,
-    String sourceIp,
-  ) {
-    final current = _savedServer;
-    if (current == null || !_matchesSavedServerAnnouncement(announcement)) {
-      return;
-    }
-
-    final now = DateTime.now();
-    final bool foregroundRecoveryActive = _isForegroundRecoveryActive(now: now);
-    final bool serverChanged =
-        _serverIp != announcement.ip || _serverPort != announcement.port;
-    final bool shouldReconnectFromBroadcast =
-        _recoveryPolicy.shouldReconnectFromUdp(
-      serverChanged: serverChanged,
-      foregroundRecoveryActive: foregroundRecoveryActive,
-      status: _status,
-      lastConnectStartedAt: _lastConnectStartedAt,
-      now: now,
-    );
-
-    if (serverChanged) {
-      _savedServerFallbackTimer?.cancel();
-      _savedServerFallbackTimer = null;
-      final updated = current.copyWith(
-        deviceId:
-            current.hasDeviceId ? current.deviceId : announcement.deviceId,
-        ip: announcement.ip,
-        ips: current.candidateIps,
-        port: announcement.port,
-        name: announcement.name.isNotEmpty ? announcement.name : current.name,
-        os: announcement.os.isNotEmpty ? announcement.os : current.os,
-        lastConnectedTs: now.millisecondsSinceEpoch,
-      );
-      _savedServer = updated;
-      _serverIp = announcement.ip;
-      _serverPort = announcement.port;
-      unawaited(_persistSavedServer(updated));
-      notifyListeners();
-      AppLogger.info(
-        'UDP 修正已保存设备地址: ${announcement.ip}:${announcement.port} (来源: $sourceIp)',
-      );
-    }
-
-    if (serverChanged || shouldReconnectFromBroadcast) {
-      _savedServerFallbackTimer?.cancel();
-      _savedServerFallbackTimer = null;
-      _reconnectTimer?.cancel();
-      _forceReconnect(
-        resetBackoff: true,
-        reason: serverChanged
-            ? 'saved server udp address update'
-            : 'saved server udp recovery probe',
-      );
-    }
-  }
-
-  bool _matchesSavedServerAnnouncement(UdpDiscoveryAnnouncement announcement) {
-    final current = _savedServer;
-    if (current == null) {
-      return false;
-    }
-
-    if (current.hasDeviceId && announcement.deviceId.isNotEmpty) {
-      return current.deviceId == announcement.deviceId;
-    }
-
-    if (!current.hasDeviceId &&
-        current.name.isNotEmpty &&
-        announcement.name.isNotEmpty) {
-      return current.name == announcement.name;
-    }
-
-    return false;
   }
 
   void _beginForegroundRecovery() {

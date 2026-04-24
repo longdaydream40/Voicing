@@ -49,6 +49,27 @@ void main() {
     expect(server.toJson()['ips'], ['10.16.177.83', '192.168.137.1']);
   });
 
+  test('saved server promotes connected ip without losing older candidates',
+      () {
+    const server = SavedServer(
+      deviceId: 'abc123',
+      ip: '192.168.137.1',
+      ips: ['192.168.137.1', '10.16.177.83'],
+      port: 9527,
+      name: 'Kevin-Desktop',
+      os: 'windows',
+      lastConnectedTs: 1713883200000,
+    );
+
+    final updated = server.copyWith(
+      ip: '10.16.177.83',
+      ips: server.candidateIps,
+    );
+
+    expect(updated.candidateIps, ['10.16.177.83', '192.168.137.1']);
+    expect(updated.toJson()['ips'], ['10.16.177.83', '192.168.137.1']);
+  });
+
   test('saved server loads legacy single-ip blobs as one candidate', () {
     final server = SavedServer.fromJson({
       'schema_version': 1,

@@ -49,7 +49,6 @@ from PIL import Image, ImageDraw
 import pyperclip
 
 from device_identity import get_or_create_device_identity
-from network_recovery import build_udp_broadcast_payload, refresh_server_interfaces
 from platform_autostart import is_startup_enabled, set_startup_enabled
 from platform_instance import check_single_instance, show_already_running_message
 from platform_keyboard import paste_from_clipboard, press_enter
@@ -72,7 +71,6 @@ from voicing_protocol import (
     WEBSOCKET_PORT,
     TEXT_SEND_MODE_COMMIT,
     TEXT_SEND_MODE_SUBMIT,
-    UDP_BROADCAST_PORT,
     build_ack_message,
     build_connected_message,
     build_qr_payload,
@@ -168,10 +166,6 @@ def setup_logging():
 # ============================================================
 # Platform discovery default IP / 平台默认发现 IP
 DEFAULT_SERVER_IP = get_default_server_ip()
-# UDP broadcast configuration / UDP 广播配置
-UDP_BROADCAST_INTERVAL = 2  # 广播间隔（秒）
-
-
 class NetworkInterfaceCandidate(NamedTuple):
     ip: str
     prefix_length: int
@@ -605,92 +599,16 @@ def get_advertised_server_ips() -> list[str]:
 
 def log_detected_network_interfaces(interfaces: list[NetworkInterfaceCandidate]) -> None:
     if not interfaces:
-        logging.warning("未检测到可用于定向广播的私有 IPv4 接口，将回退到 <broadcast> 全局广播。")
-        logging.info(f"回退广播 IP: {get_hotspot_ip()}")
+        logging.warning("未检测到可用于 QR 连接的私有 IPv4 接口。")
+        logging.info(f"回退 QR IP: {get_hotspot_ip()}")
         return
 
-    logging.info(f"检测到 {len(interfaces)} 个可广播网络接口:")
+    logging.info(f"检测到 {len(interfaces)} 个 QR 连接候选网络接口:")
     for candidate in interfaces:
         label = candidate.interface_type
         if any(candidate.ip.startswith(prefix) for prefix in get_known_hotspot_prefixes()):
             label = f"{label}/hotspot"
         logging.info(f"  - {candidate.ip}/{candidate.prefix_length} ({label}; {candidate.name or 'unknown'})")
-
-
-# ============================================================
-# UDP Broadcast for Auto-Discovery / UDP 广播自动发现
-# ============================================================
-def start_udp_broadcast():
-    """
-    Start UDP broadcast to let mobile clients discover this server.
-    启动 UDP 广播让移动客户端自动发现此服务器。
-    """
-    global SERVER_INTERFACES
-
-    broadcast_socket = None
-    try:
-        broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        logging.info(
-            f"UDP 广播服务已启动，端口: {UDP_BROADCAST_PORT}，活跃接口: {len(SERVER_INTERFACES)} 个"
-        )
-
-        while state.running:
-            try:
-                current_interfaces = calculate_broadcast_addresses(get_all_local_interfaces())
-                current_interfaces, interfaces_changed = refresh_server_interfaces(
-                    SERVER_INTERFACES,
-                    current_interfaces,
-                )
-                if interfaces_changed:
-                    old_interfaces = ", ".join(f"{ip}->{broadcast}" for ip, broadcast in SERVER_INTERFACES) or "none"
-                    new_interfaces = ", ".join(f"{ip}->{broadcast}" for ip, broadcast in current_interfaces) or "none"
-                    logging.info(f"网络接口更新: {old_interfaces} -> {new_interfaces}")
-                SERVER_INTERFACES = current_interfaces
-
-                device_identity = get_or_create_device_identity()
-                if current_interfaces:
-                    for server_ip, broadcast_addr in current_interfaces:
-                        broadcast_data = build_udp_broadcast_payload(
-                            server_ip,
-                            state.ws_port,
-                            device_identity.name,
-                            device_identity.device_id,
-                            device_identity.os,
-                        )
-                        broadcast_socket.sendto(
-                            broadcast_data,
-                            (broadcast_addr, UDP_BROADCAST_PORT),
-                        )
-                        logging.debug(f"发送 UDP 广播: {server_ip} -> {broadcast_addr}:{UDP_BROADCAST_PORT}")
-                else:
-                    fallback_ip = get_hotspot_ip()
-                    broadcast_data = build_udp_broadcast_payload(
-                        fallback_ip,
-                        state.ws_port,
-                        device_identity.name,
-                        device_identity.device_id,
-                        device_identity.os,
-                    )
-                    broadcast_socket.sendto(
-                        broadcast_data,
-                        ("<broadcast>", UDP_BROADCAST_PORT),
-                    )
-                    logging.debug(f"发送 UDP 广播回退: {fallback_ip} -> <broadcast>:{UDP_BROADCAST_PORT}")
-            except Exception as e:
-                logging.debug(f"UDP 广播发送失败: {e}")
-
-            # Wait before next broadcast / 等待下次广播
-            if state.shutdown_event.wait(UDP_BROADCAST_INTERVAL):
-                break  # shutdown_event 被 set，退出循环
-
-    except Exception as e:
-        logging.error(f"UDP 广播服务错误: {e}")
-    finally:
-        if broadcast_socket:
-            broadcast_socket.close()
 
 
 # Will be set at runtime / 运行时设置
@@ -2119,7 +2037,7 @@ def main():
         show_fatal_message("Voicing 无法启动", str(exc))
         return
 
-    # Detect broadcast-capable interfaces at startup
+    # Detect QR-advertisable interfaces at startup
     discovered_interfaces = get_all_network_candidates()
     log_detected_network_interfaces(discovered_interfaces)
     SERVER_INTERFACES = calculate_broadcast_addresses(
@@ -2130,10 +2048,6 @@ def main():
     # Start WebSocket server in background thread
     ws_thread = threading.Thread(target=run_server, daemon=True)
     ws_thread.start()
-
-    # Start UDP broadcast for auto-discovery
-    udp_thread = threading.Thread(target=start_udp_broadcast, daemon=True)
-    udp_thread.start()
 
     try:
         run_tray()
