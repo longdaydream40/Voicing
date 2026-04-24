@@ -5,9 +5,13 @@ import android.net.ConnectivityManager
 import android.net.LinkAddress
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
+import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.EventChannel
@@ -24,6 +28,7 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 
 class MainActivity : FlutterActivity() {
     private val logTag = "VoicingNativeWs"
@@ -32,6 +37,14 @@ class MainActivity : FlutterActivity() {
     private val connections = ConcurrentHashMap<Int, NativeWebSocketConnection>()
     private val pendingEvents = mutableListOf<Map<String, Any?>>()
     private var eventSink: EventChannel.EventSink? = null
+    private var keyboardInsetSink: EventChannel.EventSink? = null
+    private var lastKeyboardInsetDp = 0.0
+    private var hasKeyboardInset = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        installKeyboardInsetListener()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -90,6 +103,59 @@ class MainActivity : FlutterActivity() {
                 eventSink = null
             }
         })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "voicing/keyboard_insets"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                keyboardInsetSink = events
+                events?.success(lastKeyboardInsetDp)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                keyboardInsetSink = null
+            }
+        })
+    }
+
+    private fun installKeyboardInsetListener() {
+        val rootView = window.decorView
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+            emitKeyboardInset(insets)
+            insets
+        }
+        ViewCompat.setWindowInsetsAnimationCallback(
+            rootView,
+            object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: MutableList<WindowInsetsAnimationCompat>
+                ): WindowInsetsCompat {
+                    emitKeyboardInset(insets)
+                    return insets
+                }
+            }
+        )
+        ViewCompat.requestApplyInsets(rootView)
+    }
+
+    private fun emitKeyboardInset(insets: WindowInsetsCompat) {
+        val imeBottomPx = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        val imeBottomDp = imeBottomPx / resources.displayMetrics.density.toDouble()
+        if (hasKeyboardInset && abs(imeBottomDp - lastKeyboardInsetDp) < 0.1) {
+            return
+        }
+        lastKeyboardInsetDp = imeBottomDp
+        hasKeyboardInset = true
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            keyboardInsetSink?.success(imeBottomDp)
+        } else {
+            mainHandler.post {
+                keyboardInsetSink?.success(imeBottomDp)
+            }
+        }
     }
 
     private fun connectWifiWebSocket(requestedId: Int?, url: String, timeoutMs: Int): Int {

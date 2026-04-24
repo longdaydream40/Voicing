@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show max, min, pi, sin;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'app_theme.dart';
@@ -37,6 +39,12 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   static const double _headerControlHeight = 48;
+  static const double _statusTextHorizontalOffset = 2;
+  static const double _headerTextVerticalOffset = -0.5;
+  static const double _menuWarmupOpacity = 0.001;
+  static const Duration _qrOpenAfterKeyboardDelay = Duration(milliseconds: 280);
+  static const EventChannel _keyboardInsetsChannel =
+      EventChannel('voicing/keyboard_insets');
 
   final GlobalKey _menuButtonKey = GlobalKey();
 
@@ -45,10 +53,13 @@ class _MainPageState extends State<MainPage>
   late final AnimationController _menuAnimationController;
   late final Animation<double> _menuSlideAnimation;
   late final Animation<double> _menuFadeAnimation;
+  StreamSubscription<dynamic>? _keyboardInsetsSubscription;
 
   bool _showMenu = false;
   bool _menuOverlayMounted = false;
+  bool _prepaintMenuOverlay = false;
   bool _qrLocking = false;
+  double? _nativeKeyboardInset;
   Size _qrScannerLayoutSize = Size.zero;
   DateTime? _qrScannerEnteredAt;
   DateTime? _lastQrErrorShownAt;
@@ -82,10 +93,19 @@ class _MainPageState extends State<MainPage>
     );
 
     _controller.initialize();
+    _listenToNativeKeyboardInsets();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        setState(() => _menuOverlayMounted = true);
+        setState(() {
+          _menuOverlayMounted = true;
+          _prepaintMenuOverlay = true;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() => _prepaintMenuOverlay = false);
+          }
+        });
       }
     });
   }
@@ -97,7 +117,30 @@ class _MainPageState extends State<MainPage>
     _controller.dispose();
     _qrScannerController.dispose();
     _menuAnimationController.dispose();
+    _keyboardInsetsSubscription?.cancel();
     super.dispose();
+  }
+
+  void _listenToNativeKeyboardInsets() {
+    _keyboardInsetsSubscription =
+        _keyboardInsetsChannel.receiveBroadcastStream().listen(
+      (event) {
+        if (!mounted || event is! num) {
+          return;
+        }
+        final nextInset = event.toDouble();
+        if (_nativeKeyboardInset != null &&
+            (nextInset - _nativeKeyboardInset!).abs() < 0.25) {
+          return;
+        }
+        setState(() => _nativeKeyboardInset = nextInset);
+      },
+      onError: (_) {
+        if (mounted) {
+          setState(() => _nativeKeyboardInset = null);
+        }
+      },
+    );
   }
 
   @override
@@ -125,7 +168,12 @@ class _MainPageState extends State<MainPage>
     }
 
     setState(() => _showMenu = true);
-    _menuAnimationController.forward();
+    _menuAnimationController.value = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _showMenu) {
+        _menuAnimationController.forward(from: 0);
+      }
+    });
   }
 
   void _closeMenu() {
@@ -142,6 +190,23 @@ class _MainPageState extends State<MainPage>
 
   void _recallLastText() {
     _controller.recallLastText();
+  }
+
+  Future<void> _openQrScannerFromMenu() async {
+    final hadKeyboardOpen =
+        (_nativeKeyboardInset ?? MediaQuery.of(context).viewInsets.bottom) > 0;
+
+    _closeMenu();
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (hadKeyboardOpen) {
+      await Future<void>.delayed(_qrOpenAfterKeyboardDelay);
+    }
+    if (!mounted) {
+      return;
+    }
+
+    _controller.enterQrScanMode();
   }
 
   Future<void> _showManualServerDialog() async {
@@ -259,12 +324,21 @@ class _MainPageState extends State<MainPage>
 
   @override
   Widget build(BuildContext context) {
+    final keyboardInset =
+        _nativeKeyboardInset ?? MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md + keyboardInset,
+              ),
               child: Column(
                 children: [
                   _buildHeader(),
@@ -320,13 +394,19 @@ class _MainPageState extends State<MainPage>
                 _buildStatusDot(connectionDotColor),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Text(
-                    connectionText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.label.copyWith(
-                      color: connectionDotColor,
-                      height: 1,
+                  child: Transform.translate(
+                    offset: const Offset(
+                      _statusTextHorizontalOffset,
+                      _headerTextVerticalOffset,
+                    ),
+                    child: Text(
+                      connectionText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.label.copyWith(
+                        color: connectionDotColor,
+                        height: 1,
+                      ),
                     ),
                   ),
                 ),
@@ -374,11 +454,14 @@ class _MainPageState extends State<MainPage>
               ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: Text(
-                  '更多功能操作',
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  style: AppTextStyles.label.copyWith(height: 1),
+                child: Transform.translate(
+                  offset: const Offset(0, _headerTextVerticalOffset),
+                  child: Text(
+                    '更多功能操作',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: AppTextStyles.label.copyWith(height: 1),
+                  ),
                 ),
               ),
             ],
@@ -401,8 +484,19 @@ class _MainPageState extends State<MainPage>
     return SizedBox.expand(
       child: IgnorePointer(
         ignoring: !isOpen,
-        child: FadeTransition(
-          opacity: _menuFadeAnimation,
+        child: AnimatedBuilder(
+          animation: _menuFadeAnimation,
+          builder: (context, child) {
+            final opacity = isOpen
+                ? _menuFadeAnimation.value
+                : _prepaintMenuOverlay
+                    ? _menuWarmupOpacity
+                    : 0.0;
+            return Opacity(
+              opacity: opacity,
+              child: child,
+            );
+          },
           child: GestureDetector(
             onTap: _closeMenu,
             behavior: HitTestBehavior.translucent,
@@ -499,10 +593,7 @@ class _MainPageState extends State<MainPage>
                                 _buildMenuItem(
                                   icon: Icons.qr_code_scanner,
                                   text: '扫码连接',
-                                  onTap: () {
-                                    _closeMenu();
-                                    _controller.enterQrScanMode();
-                                  },
+                                  onTap: _openQrScannerFromMenu,
                                   borderRadius: const BorderRadius.only(
                                     bottomLeft: Radius.circular(
                                       AppSpacing.borderRadius,
@@ -918,7 +1009,7 @@ class _MainPageState extends State<MainPage>
         const SizedBox(height: AppSpacing.sm),
         const Center(
           child: Text(
-            '语音自动发送 · 回车手动发送',
+            '语音自动发送 · 请扫二维码连接设备',
             style: TextStyle(
               fontSize: 13,
               color: AppColors.textHint,
