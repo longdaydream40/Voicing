@@ -85,6 +85,22 @@ class SavedServer {
     );
   }
 
+  SavedServer mergeCandidateIpsFrom(SavedServer previous) {
+    if (!_canMergeCandidateIps(previous, this)) {
+      return this;
+    }
+
+    return copyWith(
+      ips: normalizeIpCandidates(
+        ip,
+        <dynamic>[
+          ...candidateIps,
+          ...previous.candidateIps,
+        ],
+      ),
+    );
+  }
+
   static String readString(dynamic value) => _readString(value);
 
   static int? readInt(dynamic value) => _readInt(value);
@@ -157,6 +173,16 @@ class SavedServer {
         os,
         lastConnectedTs,
       );
+}
+
+bool _canMergeCandidateIps(SavedServer previous, SavedServer incoming) {
+  if (previous.hasDeviceId && incoming.hasDeviceId) {
+    return previous.deviceId == incoming.deviceId;
+  }
+
+  // Legacy saved_server records may not have device_id yet. Preserve their
+  // address history when a QR scan upgrades the same saved PC to a modern ID.
+  return true;
 }
 
 bool _listEquals(List<String> a, List<String> b) {

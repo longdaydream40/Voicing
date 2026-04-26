@@ -70,6 +70,82 @@ void main() {
     expect(updated.toJson()['ips'], ['10.16.177.83', '192.168.137.1']);
   });
 
+  test('QR scan merge keeps old candidates for the same device', () {
+    const previous = SavedServer(
+      deviceId: 'abc123',
+      ip: '192.168.137.1',
+      ips: ['192.168.137.1'],
+      port: 9527,
+      name: 'Kevin-Desktop',
+      os: 'windows',
+      lastConnectedTs: 1713883200000,
+    );
+    const incoming = SavedServer(
+      deviceId: 'abc123',
+      ip: '10.16.177.83',
+      ips: ['10.16.177.83'],
+      port: 9527,
+      name: 'Kevin-Desktop',
+      os: 'windows',
+      lastConnectedTs: 1713883300000,
+    );
+
+    final merged = incoming.mergeCandidateIpsFrom(previous);
+
+    expect(merged.ip, '10.16.177.83');
+    expect(merged.candidateIps, ['10.16.177.83', '192.168.137.1']);
+  });
+
+  test('QR scan merge does not keep old candidates for a replaced device', () {
+    const previous = SavedServer(
+      deviceId: 'old-device',
+      ip: '192.168.137.1',
+      ips: ['192.168.137.1'],
+      port: 9527,
+      name: 'Old-PC',
+      os: 'windows',
+      lastConnectedTs: 1713883200000,
+    );
+    const incoming = SavedServer(
+      deviceId: 'new-device',
+      ip: '10.16.177.83',
+      ips: ['10.16.177.83'],
+      port: 9527,
+      name: 'New-PC',
+      os: 'windows',
+      lastConnectedTs: 1713883300000,
+    );
+
+    final merged = incoming.mergeCandidateIpsFrom(previous);
+
+    expect(merged.candidateIps, ['10.16.177.83']);
+  });
+
+  test('QR scan merge preserves legacy candidates without device id', () {
+    const previous = SavedServer(
+      deviceId: '',
+      ip: '192.168.137.1',
+      ips: ['192.168.137.1'],
+      port: 9527,
+      name: '',
+      os: '',
+      lastConnectedTs: 1713883200000,
+    );
+    const incoming = SavedServer(
+      deviceId: 'abc123',
+      ip: '10.16.177.83',
+      ips: ['10.16.177.83'],
+      port: 9527,
+      name: 'Kevin-Desktop',
+      os: 'windows',
+      lastConnectedTs: 1713883300000,
+    );
+
+    final merged = incoming.mergeCandidateIpsFrom(previous);
+
+    expect(merged.candidateIps, ['10.16.177.83', '192.168.137.1']);
+  });
+
   test('saved server loads legacy single-ip blobs as one candidate', () {
     final server = SavedServer.fromJson({
       'schema_version': 1,

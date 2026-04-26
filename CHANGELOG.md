@@ -13,6 +13,34 @@ _暂无。_
 
 ---
 
+## [2.9.3] - 2026-04-26
+
+### 修复
+
+- **Android: 扫码后保留同一 PC 的旧局域网候选 IP**
+  - 修复手机和电脑从 A 局域网切到 B 局域网、重新扫码成功后，再切回 A 局域网不能自动重连的问题
+  - Android 扫码成功保存同一 `device_id` 的 PC 时，会将本次 QR 的 `ip/ips` 与旧 `saved_server.candidateIps` 合并
+  - 新连接成功的 IP 仍会提升为主 IP，但旧局域网 / 热点 IP 不再被覆盖丢失
+  - 用户确认替换为另一台 PC 时不会合并旧候选池，避免跨设备串地址
+
+### 文档
+
+- README 和 Android README 补充说明：同一 PC 多次扫码会保留历史局域网候选 IP，切回旧网络后仍应自动重连
+
+### 测试
+
+- Android:
+  - `flutter analyze --no-fatal-infos --no-fatal-warnings`
+  - `flutter test`
+  - `flutter build apk --debug`
+- PC:
+  - `python -m py_compile pc/voice_coding.py pc/voicing_protocol.py pc/device_identity.py pc/network_recovery.py`
+  - `python -m unittest discover -s pc/tests`
+- General:
+  - `git diff --check`
+
+---
+
 ## [2.9.2] - 2026-04-26
 
 ### 修复

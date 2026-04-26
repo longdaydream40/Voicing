@@ -313,8 +313,11 @@ class VoicingConnectionController extends ChangeNotifier {
       _lastQrCorners = null;
       _qrPairingSucceeded = false;
       _qrPairingFailed = false;
+      final serverToSave = _savedServer == null
+          ? scannedServer
+          : scannedServer.mergeCandidateIpsFrom(_savedServer!);
       await _saveManualServer(
-        scannedServer.copyWith(
+        serverToSave.copyWith(
           lastConnectedTs: DateTime.now().millisecondsSinceEpoch,
         ),
         notify: false,
