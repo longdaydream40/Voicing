@@ -50,6 +50,7 @@ flutter build apk --release
 - 改动 `MainActivity.kt`、Manifest 或 Gradle 配置后必须完整重新安装 APK；Flutter hot restart 不会更新原生层
 - 改动键盘高度、WiFi-bound WebSocket 等原生桥接逻辑后，必须用完整 APK 重新安装验证
 - 正式 release 现在必须配置 `key.properties`；若只做本地调试验证，可显式传入 `-Pvoicing.allowDebugReleaseSigning=true` 作为临时豁免，默认不再静默退回 debug signing
+- Android Gradle 仓库顺序为官方 `google()` / `mavenCentral()` 优先，阿里云镜像仅作 fallback，避免镜像临时 502 阻断 GitHub Actions release 构建
 
 ## 技术栈
 

@@ -28,10 +28,13 @@ _暂无。_
 - **PC: 快速网卡枚举**
   - 新增 `psutil` 作为桌面端运行时网卡枚举主路径，避免 QR 打开或 server 后台循环高频启动 PowerShell
   - 保留原有命令行网卡枚举作为 fallback，确保缺少 `psutil` 时仍可启动
+- **Release: Android 依赖解析稳定性**
+  - Android Gradle 仓库顺序改为官方 `google()` / `mavenCentral()` 优先，阿里云镜像只作为 fallback，避免镜像 502 导致 GitHub Actions release 构建失败
 
 ### 文档
 
 - README 和 Android README 补充 v2.9.2 网络切换行为：PC 端运行中刷新 QR 码与 WebSocket 监听地址，切换局域网后无需重启 PC 端软件
+- Android README 补充 release 构建仓库顺序策略
 
 ### 测试
 

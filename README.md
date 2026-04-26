@@ -191,7 +191,7 @@ cd pc && pyinstaller --onefile --name=Voicing \
 cd android/voice_coding && flutter build apk --release
 ```
 
-注意：本地 Android release 构建需要兼容的 JDK 17/21，并配置正式签名；当前 GitHub Actions 发布环境固定使用 Java 17，正式 Release 也会强制校验签名 secrets。
+注意：本地 Android release 构建需要兼容的 JDK 17/21，并配置正式签名；当前 GitHub Actions 发布环境固定使用 Java 17，正式 Release 也会强制校验签名 secrets。Android Gradle 仓库解析优先使用官方 `google()` / `mavenCentral()`，阿里云镜像仅作为 fallback。
 
 ## 常见问题
 
