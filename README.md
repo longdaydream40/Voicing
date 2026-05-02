@@ -36,6 +36,7 @@ Voicing turns your phone's voice keyboard into your computer's "mouth" — speak
 - **Undo** — accidentally sent something? One tap to take it back
 - **Auto reconnect** — wakes from screen-off and prefers showing "connected" while reconnecting
 - **Cross-platform** — Windows / macOS / Linux desktop, plus Android phone client
+- **Desktop pet mode** — optional always-on-top transparent APNG companion with a click indicator and global raise hotkey
 - **Compact** — 21 MB APK, ~50 MB desktop, no runtime dependencies
 
 ## Quick start
@@ -92,10 +93,16 @@ Tray icon menu (right-click on Windows / left-click on macOS+Linux):
 | Item | Function |
 |--------|------|
 | Show QR code | Display the current pairing QR for this PC |
+| Desktop Pet | Toggle the transparent desktop pet overlay |
 | Sync input | Toggle whether phone text is accepted |
 | Auto-start | Register at boot via the OS's autostart mechanism |
 | Open log | Open today's log in the default text editor |
 | Quit | Exit the app |
+
+Desktop pet mode:
+- Shows `pc/assets/desktop_pet.apng` as a draggable, transparent, always-on-top overlay
+- Click the character to toggle the small `pc/assets/desktop_pet_click.png` indicator near its upper-left corner
+- Press `Ctrl+Alt+V` to show the pet immediately or raise it above other desktop windows
 
 Tray icon states:
 - Blinking = waiting for the phone to connect
@@ -112,6 +119,7 @@ Tray icon states:
 6. The Android WebSocket prefers binding to the physical WiFi `Network`; the PC filters VPN / virtual adapters; this reduces misrouting when either end has a VPN running
 7. Phone text (voice or typed) streams to the desktop in real time
 8. The desktop pastes via the clipboard (Windows Ctrl+V / macOS Cmd+V / Linux Ctrl+V) and emits an Enter when needed
+9. The optional desktop pet runs as a transparent topmost PyQt window and can be raised with the global `Ctrl+Alt+V` hotkey
 
 ## Development
 

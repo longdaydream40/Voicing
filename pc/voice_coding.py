@@ -54,6 +54,7 @@ except Exception:
     psutil = None
 
 from device_identity import get_or_create_device_identity
+from desktop_pet import DesktopPetWindow, WindowsGlobalHotkey
 from platform_autostart import is_startup_enabled, set_startup_enabled
 from platform_instance import check_single_instance, show_already_running_message
 from platform_keyboard import paste_from_clipboard, press_enter
@@ -109,6 +110,8 @@ class AppState:
         self.running = True
         self.server = None
         self.tray_icon = None
+        self.pet_window = None
+        self.pet_hotkey = None
         self.ws_port = WS_PORT
         self.connected_clients = set()
         self.blink_state = False  # For icon blinking / 图标闪烁状态
@@ -141,6 +144,16 @@ def show_qr_scan_success(reason="unknown"):
 # ============================================================
 # Logging Setup / 日志配置
 # ============================================================
+def get_or_create_pet_window():
+    if state.pet_window is None:
+        state.pet_window = DesktopPetWindow()
+    return state.pet_window
+
+
+def raise_desktop_pet_from_hotkey():
+    get_or_create_pet_window().raise_pet()
+
+
 def setup_logging():
     """设置日志系统"""
     # 日志文件保存在用户数据目录
@@ -1109,6 +1122,15 @@ class ModernMenuWidget(QWidget):
         separator_qr.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); margin: 4px 8px;")
         container_layout.addWidget(separator_qr)
 
+        self.pet_btn = MenuItemWidget("P", "Desktop Pet", has_toggle=True, is_checked=False)
+        self.pet_btn.clicked.connect(self.toggle_pet)
+        container_layout.addWidget(self.pet_btn)
+
+        separator_pet = QWidget()
+        separator_pet.setFixedHeight(1)
+        separator_pet.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); margin: 4px 8px;")
+        container_layout.addWidget(separator_pet)
+
         # 同步输入
         self.sync_btn = MenuItemWidget("📡", "同步输入", has_toggle=True, is_checked=True)
         self.sync_btn.clicked.connect(self.toggle_sync)
@@ -1262,6 +1284,9 @@ class ModernMenuWidget(QWidget):
     def update_state(self):
         """更新菜单状态"""
         self.sync_btn.update_toggle_status(state.sync_enabled)
+        self.pet_btn.update_toggle_status(
+            state.pet_window is not None and state.pet_window.isVisible()
+        )
         self.startup_btn.update_toggle_status(is_startup_enabled())
 
     def toggle_sync(self):
@@ -1280,6 +1305,11 @@ class ModernMenuWidget(QWidget):
             loop.run_until_complete(broadcast_sync_state())
             loop.close()
         threading.Thread(target=send_sync_state, daemon=True).start()
+
+    def toggle_pet(self):
+        visible = get_or_create_pet_window().toggle_pet()
+        self.pet_btn.update_toggle_status(visible)
+        self.close_with_animation()
 
     def toggle_startup(self):
         """切换开机自启"""
@@ -1310,6 +1340,11 @@ class ModernMenuWidget(QWidget):
         """退出应用"""
         state.running = False
         state.shutdown_event.set()
+        if state.pet_hotkey is not None:
+            state.pet_hotkey.unregister()
+            state.pet_hotkey = None
+        if state.pet_window is not None:
+            state.pet_window.close()
         QApplication.quit()
 
     def close_with_animation(self):
@@ -2104,6 +2139,14 @@ def run_tray():
     app.setQuitOnLastWindowClosed(False)
     if not QSystemTrayIcon.isSystemTrayAvailable():
         raise RuntimeError("当前桌面环境不提供系统托盘，Voicing 无法继续运行。")
+
+    if state.pet_hotkey is None:
+        state.pet_hotkey = WindowsGlobalHotkey(raise_desktop_pet_from_hotkey)
+        if state.pet_hotkey.register():
+            app.installNativeEventFilter(state.pet_hotkey)
+            logging.info("Desktop pet hotkey registered: Ctrl+Alt+V")
+        else:
+            state.pet_hotkey = None
 
     if state.ui_signals is None:
         state.ui_signals = UiSignals()
